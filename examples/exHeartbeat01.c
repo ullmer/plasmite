@@ -20,7 +20,7 @@ int main() {
   for (int i=0;; i++) {
     lite3_set_i32(buf, &buflen, 0, bufsz, "ingests",   i);
 
-    print("bufsz: %i\n", bufsz);
+    printf("bufsz: %i\n", (int)bufsz);
 
     sleep(sleepDur);
   }
