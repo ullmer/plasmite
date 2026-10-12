@@ -9,7 +9,6 @@ uint8_t buf[1024];
 
 int main() {
   unsigned int   sleepDur = 3;
-  unsigned int32 blobSize;
 
   size_t buflen = 0;
   size_t bufsz = sizeof(buf);
