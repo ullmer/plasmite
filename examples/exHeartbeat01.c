@@ -7,8 +7,16 @@
 
 uint8_t buf[1024];
 
-int main() {
+int main(int argc, char **argv) {
   unsigned int   sleepDur = 3;
+
+  if (argc < 2) {
+    printf("filehandle command-line argument (often a pipe) required!\n");
+    return -1;
+  }
+
+  char *fnOut = argv[1];
+  printf("output filename: %s\n", fnOut);
 
   size_t buflen = 0;
   size_t bufsz = sizeof(buf);
