@@ -139,8 +139,8 @@ int main(int argc, char **argv)
   }
 
   char *fnIn = argv[1];
-  printf("input filename: %s\n", fnOut);
-  FILE *fp = fopen(fnOut, "rb");
+  printf("input filename: %s\n", fnIn);
+  FILE *fp = fopen(fnIn, "rb");
   if (!fp) {
     printf("Error opening file for reading.\n");
     return -1;
