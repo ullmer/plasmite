@@ -27,6 +27,7 @@ int main(int argc, char **argv) {
 
   size_t buflen = 0;
   size_t bufsz = sizeof(buf);
+  size_t nwritten;
 
   lite3_init_obj( buf, &buflen, bufsz);
   lite3_set_str(  buf, &buflen, 0, bufsz, "descrips", "hb");
@@ -35,8 +36,14 @@ int main(int argc, char **argv) {
     lite3_set_i64(buf, &buflen, 0, bufsz, "ingests",   i);
 
     printf("writing blob, byte count: %i\n", (int)buflen);
-    fprintf(f, "%i:", (int)buflen);
-    fwrite(buf, (int) buflen, 1, f);
+    nwritten = fprintf(f, "%i:", (int)buflen);
+    if (nwritten < 0) { 
+      printf("fprintf write error\n"); return -1;
+    }
+
+    nwritten = fwrite(buf, (int) buflen, 1, f);
+    if (nwritten < 0) { printf("fwrite write error\n"); return -1; }
+
     fflush( f);
     sleep(sleepDur);
   }
