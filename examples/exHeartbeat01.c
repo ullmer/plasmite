@@ -37,9 +37,7 @@ int main(int argc, char **argv) {
 
     printf("writing blob, byte count: %i\n", (int)buflen);
     nwritten = fprintf(f, "%i:", (int)buflen);
-    if (nwritten < 0) { 
-      printf("fprintf write error\n"); return -1;
-    }
+    if (nwritten < 0) { printf("fprintf write error\n"); return -1; }
 
     nwritten = fwrite(buf, (int) buflen, 1, f);
     if (nwritten < 0) { printf("fwrite write error\n"); return -1; }
