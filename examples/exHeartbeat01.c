@@ -19,7 +19,7 @@ int main() {
   for (int i=0;; i++) {
     lite3_set_i64(buf, &buflen, 0, bufsz, "ingests",   i);
 
-    printf("bufsz: %i\n", (int)bufsz);
+    printf("bufsz: %i\n", (int)buflen);
 
     sleep(sleepDur);
   }
