@@ -1,4 +1,6 @@
-/* write sample heartbeat lite3 to a named file (likely a pipe */
+/* write sample heartbeat lite3 blob to a named file (likely a pipe) using netstrings */
+/* Brygg Ullmer, Clemson University */
+/* October 12, 2026 */
 
 #include <stdio.h>
 #include <unistd.h>
@@ -17,6 +19,11 @@ int main(int argc, char **argv) {
 
   char *fnOut = argv[1];
   printf("output filename: %s\n", fnOut);
+  FILE *f = fopen(fnOut, 'wb');
+  if (f == NULL) {
+    printf("Error opening file for writing.\n");
+    return -1;
+  }
 
   size_t buflen = 0;
   size_t bufsz = sizeof(buf);
@@ -27,8 +34,10 @@ int main(int argc, char **argv) {
   for (int i=0;; i++) {
     lite3_set_i64(buf, &buflen, 0, bufsz, "ingests",   i);
 
-    printf("bufsz: %i\n", (int)buflen);
-
+    printf("writing blob, byte count: %i\n", (int)buflen);
+    fprintf(f, "%i:", (int)buflen);
+    fwrite( f, buf, (int) buflen, 1);
+    fflush( f);
     sleep(sleepDur);
   }
 
