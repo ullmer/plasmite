@@ -1,3 +1,21 @@
+/*
+ * plasmite_ingest.c
+ *
+ * Reads a byte stream containing:
+ *
+ *   <length>:<lite3_blob>,
+ *
+ * netstrings.
+ *
+ * For every complete Lite3 blob:
+ *
+ *   pool_append(blob, len);
+ *
+ * is invoked.
+ * Code by CoPilot and Brygg Ullmer, Clemson University
+ * Begun 2026-10-12
+ */
+
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -31,7 +49,6 @@ static void pool_append(
    *   etc.
    */
 }
-
 
 /*
  * Parse one netstring.
@@ -107,11 +124,8 @@ static int next_netstring(
   if (rx->buf[payload_start + len] != ',')
     return -1;
 
-  *payload =
-    rx->buf + payload_start;
-
-  *payload_len =
-    len;
+  *payload     = rx->buf + payload_start;
+  *payload_len = len;
 
   /*
    * Consume message.
@@ -126,11 +140,8 @@ static int next_netstring(
 static void compact_buffer(
   rx_state_t *rx)
 {
-  if (rx->begin == 0)
-    return;
-
-  if (rx->begin < RXBUF_SZ / 2)
-    return;
+  if (rx->begin == 0)           return;
+  if (rx->begin < RXBUF_SZ / 2) return;
 
   memmove(
     rx->buf,
@@ -173,22 +184,11 @@ int main(int argc, char **argv)
       break;
     }
 
-    size_t n =
-      fread(
-        rx.buf + rx.end,
-        1,
-        RXBUF_SZ - rx.end,
-        fp);
+    size_t n = fread(rx.buf + rx.end, 1, RXBUF_SZ - rx.end, fp);
 
     if (n == 0) {
-
-      if (feof(fp))
-        break;
-
-      if (ferror(fp)) {
-        perror("fread");
-        break;
-      }
+      if (feof(fp)) break;
+      if (ferror(fp)) { perror("fread"); break; }
     }
 
     rx.end += n;
@@ -198,22 +198,10 @@ int main(int argc, char **argv)
       uint8_t *blob;
       size_t blob_len;
 
-      int ret =
-        next_netstring(
-          &rx,
-          &blob,
-          &blob_len);
+      int ret = next_netstring( &rx, &blob, &blob_len);
 
-      if (ret == 0)
-        break;
-
-      if (ret < 0) {
-
-        fprintf(stderr,
-            "Malformed netstring\n");
-
-        return 1;
-      }
+      if (ret == 0) break;
+      if (ret < 0) { fprintf(stderr, "Malformed netstring\n"); return 1; }
 
       /*
        * Optional Lite3 sanity check:
@@ -233,3 +221,5 @@ int main(int argc, char **argv)
 
   return 0;
 }
+
+/// end ///
