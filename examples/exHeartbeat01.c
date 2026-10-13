@@ -42,6 +42,9 @@ int main(int argc, char **argv) {
     nwritten = fwrite(buf, (int) buflen, 1, f);
     if (nwritten < 0) { printf("fwrite write error\n"); return -1; }
 
+    nwritten = fwrite(",", 1, 1, f);
+    if (nwritten < 0) { printf("fwrite comma error\n"); return -1; }
+
     fflush( f);
     sleep(sleepDur);
   }
@@ -50,4 +53,3 @@ int main(int argc, char **argv) {
 }
 
 /* end */
-
