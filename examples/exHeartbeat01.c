@@ -19,7 +19,7 @@ int main(int argc, char **argv) {
 
   char *fnOut = argv[1];
   printf("output filename: %s\n", fnOut);
-  FILE *f = fopen(fnOut, 'wb');
+  FILE *f = fopen(fnOut, "wb");
   if (f == NULL) {
     printf("Error opening file for writing.\n");
     return -1;
@@ -36,7 +36,7 @@ int main(int argc, char **argv) {
 
     printf("writing blob, byte count: %i\n", (int)buflen);
     fprintf(f, "%i:", (int)buflen);
-    fwrite( f, buf, (int) buflen, 1);
+    fwrite(buf, (int) buflen, 1, f);
     fflush( f);
     sleep(sleepDur);
   }
