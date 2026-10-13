@@ -82,8 +82,7 @@ static int next_netstring(
     rx->begin++;
   }
 
-  if (rx->begin >= rx->end)
-    return 0;
+  if (rx->begin >= rx->end) return 0;
 
   /*
    * Find colon.
@@ -91,11 +90,8 @@ static int next_netstring(
 
   for (i = rx->begin; i < rx->end; i++) {
 
-    if (rx->buf[i] == ':')
-      break;
-
-    if (!isdigit(rx->buf[i]))
-      return -1;
+    if (rx->buf[i] == ':') break;
+    if (!isdigit(rx->buf[i])) return -1;
   }
 
   if (i == rx->end)
@@ -112,17 +108,11 @@ static int next_netstring(
   }
 
   size_t payload_start = i + 1;
+  size_t total_needed  = payload_start + len + 1;
 
-  size_t total_needed =
-    payload_start +
-    len +
-    1;
+  if (rx->end < total_needed) return 0;
 
-  if (rx->end < total_needed)
-    return 0;
-
-  if (rx->buf[payload_start + len] != ',')
-    return -1;
+  if (rx->buf[payload_start + len] != ',') return -1;
 
   *payload     = rx->buf + payload_start;
   *payload_len = len;
@@ -143,10 +133,7 @@ static void compact_buffer(
   if (rx->begin == 0)           return;
   if (rx->begin < RXBUF_SZ / 2) return;
 
-  memmove(
-    rx->buf,
-    rx->buf + rx->begin,
-    rx->end - rx->begin);
+  memmove(rx->buf, rx->buf + rx->begin, rx->end - rx->begin);
 
   rx->end -= rx->begin;
   rx->begin = 0;
