@@ -17,7 +17,7 @@ int main() {
   lite3_set_str(  buf, &buflen, 0, bufsz, "descrips", "hb");
 
   for (int i=0;; i++) {
-    lite3_set_i32(buf, &buflen, 0, bufsz, "ingests",   i);
+    lite3_set_i64(buf, &buflen, 0, bufsz, "ingests",   i);
 
     printf("bufsz: %i\n", (int)bufsz);
 
