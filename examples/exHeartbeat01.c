@@ -1,5 +1,6 @@
 /* write sample heartbeat lite3 blob to a named file (likely a pipe) using netstrings */
 /* Brygg Ullmer, Clemson University */
+/* Netstrings stream framing suggested by Mignon Pelletier */
 /* October 12, 2026 */
 
 #include <stdio.h>

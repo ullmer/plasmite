@@ -13,6 +13,7 @@
  *
  * is invoked.
  * Code by CoPilot and Brygg Ullmer, Clemson University
+ * Netstrings stream framing suggested by Mignon Pelletier
  * Begun 2026-10-12
  */
 
