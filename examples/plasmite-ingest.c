@@ -129,10 +129,22 @@ static int next_netstring(
   return 1;
 }
 
+/*********************** MAIN ***********************/
 
 int main(int argc, char **argv)
 {
-  FILE *fp = stdin;
+  if (argc < 2) {
+    printf("filehandle command-line argument (often a pipe) required!\n");
+    return -1;
+  }
+
+  char *fnIn = argv[1];
+  printf("input filename: %s\n", fnOut);
+  FILE *fp = fopen(fnOut, "rb");
+  if (!fp) {
+    printf("Error opening file for reading.\n");
+    return -1;
+  }
 
   rx_state_t rx;
   memset(&rx, 0, sizeof(rx));
