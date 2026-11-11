@@ -18,6 +18,7 @@ use plasmite::api::RemoteTail;
 use plasmite::api::TailOptions;
 use plasmite::api::notify;
 use plasmite::api::notify::NotifyWait;
+use plasmite::api::{UdpClient, UdpEvent, UdpFollowOptions, UdpStart};
 use plasmite::notice::Notice;
 use serde_json::Map;
 use serde_json::Value;
@@ -33,9 +34,8 @@ use super::output_support::emit_lite3;
 use super::output_support::emit_message;
 use super::output_support::emit_notice;
 use super::output_support::notice_time_now;
-use super::support::decode_payload;
-use super::support::format_ts;
 use super::support::message_from_frame;
+use super::support::message_from_lite3;
 use super::support::message_to_json;
 
 #[derive(Debug, Clone)]
@@ -51,7 +51,7 @@ impl DropNotice {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct FollowConfig {
     pub(crate) tail: u64,
     pub(crate) output_mode: OutputMode,
@@ -65,8 +65,15 @@ pub(crate) struct FollowConfig {
     pub(crate) notify: bool,
     pub(crate) color_mode: ColorMode,
     pub(crate) replay_speed: Option<f64>,
-    pub(crate) suppress_sender: Option<String>,
+    pub(crate) ready: Option<std::sync::mpsc::Sender<()>>,
     pub(crate) stop: Option<Arc<AtomicBool>>,
+}
+
+// Duplex starts sending only after the receiver has chosen its starting position.
+fn signal_ready(cfg: &FollowConfig) {
+    if let Some(ready) = &cfg.ready {
+        let _ = ready.send(());
+    }
 }
 
 pub(crate) fn matches_required_tags(required_tags: &[String], message: &Value) -> bool {
@@ -86,37 +93,37 @@ pub(crate) fn matches_required_tags(required_tags: &[String], message: &Value) -
     })
 }
 
-pub(crate) fn should_suppress_sender(message: &Value, sender: &str) -> bool {
-    message
-        .get("data")
-        .and_then(|data| data.get("from"))
-        .and_then(Value::as_str)
-        .is_some_and(|value| value == sender)
-}
-
-pub(crate) fn duplex_requires_me_when_tty(stdin_is_terminal: bool, me: Option<&str>) -> bool {
-    stdin_is_terminal && me.is_none()
-}
-
-pub(crate) fn parse_duplex_tty_line(me: &str, line: &str) -> Option<Value> {
-    let trimmed = line.trim_end_matches(&['\r', '\n'][..]);
-    if trimmed.trim().is_empty() {
-        return None;
-    }
-    Some(json!({
-        "from": me,
-        "msg": trimmed,
-    }))
-}
-
-pub(crate) fn should_suppress_message(cfg: &FollowConfig, message: &Value) -> bool {
-    cfg.suppress_sender
-        .as_deref()
-        .is_some_and(|sender| should_suppress_sender(message, sender))
-}
-
 pub(crate) fn follow_should_stop(stop: Option<&Arc<AtomicBool>>) -> bool {
     stop.is_some_and(|flag| flag.load(Ordering::Acquire))
+}
+
+// The timeout measures time without successful output, across transport waits.
+struct FollowDeadline {
+    timeout: Option<Duration>,
+    deadline: Option<Instant>,
+}
+
+impl FollowDeadline {
+    fn new(timeout: Option<Duration>) -> Self {
+        Self {
+            timeout,
+            deadline: timeout.map(|duration| Instant::now() + duration),
+        }
+    }
+
+    fn expired(&self) -> bool {
+        self.deadline.is_some_and(|at| Instant::now() >= at)
+    }
+
+    fn limit_wait(&self, max_wait: Duration) -> Duration {
+        self.deadline.map_or(max_wait, |at| {
+            at.saturating_duration_since(Instant::now()).min(max_wait)
+        })
+    }
+
+    fn emitted(&mut self) {
+        *self = Self::new(self.timeout);
+    }
 }
 
 // Sequence bounds and relative time use one start snapshot. Tail selects retained
@@ -131,6 +138,8 @@ fn history_start(oldest: u64, newest: u64, cfg: &FollowConfig) -> u64 {
             .saturating_sub(cfg.tail.saturating_sub(1))
             .max(oldest)
             .max(1)
+    } else if cfg.no_follow {
+        oldest.max(1)
     } else {
         newest.saturating_add(1).max(1)
     }
@@ -143,7 +152,6 @@ fn matches_message(
     message: &Value,
 ) -> Result<bool, Error> {
     Ok(since_ns.is_none_or(|since| timestamp_ns >= since)
-        && !should_suppress_message(cfg, message)
         && matches_required_tags(&cfg.required_tags, message)
         && matches_all(&cfg.where_predicates, message)?)
 }
@@ -240,19 +248,8 @@ impl<'a> DropReporter<'a> {
 
 fn needs_message(cfg: &FollowConfig) -> bool {
     !cfg.output_mode.is_binary()
-        || cfg.suppress_sender.is_some()
         || !cfg.required_tags.is_empty()
         || !cfg.where_predicates.is_empty()
-}
-
-fn message_from_remote_frame(frame: &RemoteLite3Frame) -> Result<Value, Error> {
-    let (meta, data) = decode_payload(&frame.payload)?;
-    Ok(json!({
-        "seq": frame.seq,
-        "time": format_ts(frame.timestamp_ns)?,
-        "meta": meta,
-        "data": data,
-    }))
 }
 
 enum RemoteStream {
@@ -322,12 +319,12 @@ pub(crate) fn follow_remote(
     let upper = bounds.newest_seq.unwrap_or(0);
     let mut expected = history_start(bounds.oldest_seq.unwrap_or(0), upper, cfg);
     let since_ns = cfg.since_ns;
+    signal_ready(cfg);
     let mut drops = DropReporter::new(cfg, pool, format!("{}/{}", client.base_url(), pool));
     if cfg.no_follow && expected > upper {
         return Ok(drops.finish(0));
     }
-    let mut deadline = cfg.timeout.map(|duration| Instant::now() + duration);
-    let mut remote_wait_ms = 100;
+    let mut deadline = FollowDeadline::new(cfg.timeout);
     loop {
         if follow_should_stop(cfg.stop.as_ref()) {
             return Ok(drops.finish(0));
@@ -335,7 +332,7 @@ pub(crate) fn follow_remote(
         if cfg.no_follow && expected > upper {
             return Ok(drops.finish(0));
         }
-        if deadline.is_some_and(|at| Instant::now() >= at) {
+        if deadline.expired() {
             return Ok(drops.finish(124));
         }
         let mut options = TailOptions::new();
@@ -343,18 +340,8 @@ pub(crate) fn follow_remote(
         // Finite reads and cancellable duplex sessions use short server waits
         // so they can observe retention/cancellation without another message.
         // An ordinary unbounded follow uses the server's streaming lifetime.
-        options.timeout = if cfg.no_follow || cfg.stop.is_some() || deadline.is_some() {
-            Some(
-                deadline
-                    .map(|at| {
-                        at.saturating_duration_since(Instant::now())
-                            .min(Duration::from_millis(remote_wait_ms))
-                    })
-                    .unwrap_or(Duration::from_millis(remote_wait_ms)),
-            )
-        } else {
-            None
-        };
+        options.timeout = (cfg.no_follow || cfg.stop.is_some() || cfg.timeout.is_some())
+            .then(|| deadline.limit_wait(Duration::from_millis(100)));
         if cfg.no_follow {
             options.max_messages = Some(
                 usize::try_from(upper.saturating_sub(expected).saturating_add(1))
@@ -366,21 +353,7 @@ pub(crate) fn follow_remote(
         } else {
             remote_pool.tail(options).map(RemoteStream::Json)
         };
-        let mut tail = match result {
-            Ok(tail) => tail,
-            Err(err)
-                if err.kind() == ErrorKind::Usage
-                    && err.message() == Some("tail timeout exceeds server limit")
-                    && remote_wait_ms > 1 =>
-            {
-                // The v0 protocol reports this limit as an error rather than
-                // metadata. At most seven smaller waits reach every supported
-                // positive limit, and the accepted wait persists for this run.
-                remote_wait_ms = (remote_wait_ms / 2).max(1);
-                continue;
-            }
-            Err(err) => return Err(err),
-        };
+        let mut tail = result?;
         while let Some(record) = tail.next_record()? {
             if follow_should_stop(cfg.stop.as_ref()) {
                 return Ok(drops.finish(0));
@@ -397,13 +370,20 @@ pub(crate) fn follow_remote(
             let reached_end = cfg.no_follow && record.seq() == upper;
             expected = record.seq().saturating_add(1);
             let timestamp_ns = record.timestamp_ns(since_ns.is_some())?;
-            let value = if needs_message(cfg) {
-                Some(match &record {
-                    RemoteRecord::Json(message) => message_to_json(message),
-                    RemoteRecord::Lite3(frame) => message_from_remote_frame(frame)?,
-                })
-            } else {
-                None
+            let (value, frame) = match record {
+                RemoteRecord::Json(message) => (Some(message_to_json(message)), None),
+                RemoteRecord::Lite3(frame) => {
+                    let value = if needs_message(cfg) {
+                        Some(message_from_lite3(
+                            frame.seq,
+                            frame.timestamp_ns,
+                            &frame.payload,
+                        )?)
+                    } else {
+                        None
+                    };
+                    (value, Some(frame))
+                }
             };
             let matches = match value.as_ref() {
                 Some(value) => matches_message(cfg, since_ns, timestamp_ns, value)?,
@@ -412,23 +392,20 @@ pub(crate) fn follow_remote(
             if matches {
                 // Receiving a matching line after the deadline must not reset
                 // the timer, even if the transport buffered or delayed it.
-                if deadline.is_some_and(|at| Instant::now() >= at) {
+                if deadline.expired() {
                     return Ok(drops.finish(124));
                 }
-                match record {
-                    RemoteRecord::Lite3(frame) => emit_lite3(
+                if let Some(frame) = frame {
+                    emit_lite3(
                         frame.seq,
                         frame.timestamp_ns,
                         &frame.payload,
                         cfg.output_mode,
-                    )?,
-                    RemoteRecord::Json(message) => emit_message(
-                        value.unwrap_or_else(|| message_to_json(&message)),
-                        cfg.output_mode,
-                        cfg.color_mode,
-                    )?,
+                    )?;
+                } else if let Some(value) = value {
+                    emit_message(value, cfg.output_mode, cfg.color_mode)?;
                 }
-                deadline = cfg.timeout.map(|duration| Instant::now() + duration);
+                deadline.emitted();
                 if cfg.one {
                     return Ok(drops.finish(0));
                 }
@@ -436,7 +413,7 @@ pub(crate) fn follow_remote(
             if reached_end {
                 return Ok(drops.finish(0));
             }
-            if deadline.is_some_and(|at| Instant::now() >= at) {
+            if deadline.expired() {
                 return Ok(drops.finish(124));
             }
         }
@@ -458,6 +435,145 @@ pub(crate) fn follow_remote(
     }
 }
 
+pub(crate) fn follow_udp(
+    endpoint: &str,
+    pool: &str,
+    cfg: &FollowConfig,
+) -> Result<RunOutcome, Error> {
+    if cfg.replay_speed.is_some() || !cfg.notify {
+        return Err(Error::new(ErrorKind::Usage)
+            .with_message("UDP follow does not support --replay or --no-notify"));
+    }
+    let client = UdpClient::new(endpoint)?;
+    let handle = client.open_pool(&PoolRef::name(pool))?;
+    let start = if let Some(since) = cfg.since_ns {
+        UdpStart::Since(since)
+    } else if cfg.tail > 0 {
+        UdpStart::Last(cfg.tail)
+    } else if cfg.no_follow {
+        UdpStart::Last(u64::MAX)
+    } else {
+        UdpStart::New
+    };
+    let mut follow = handle.follow(UdpFollowOptions {
+        start,
+        live: !cfg.no_follow,
+    })?;
+    signal_ready(cfg);
+    let mut deadline = FollowDeadline::new(cfg.timeout);
+    let mut server_skipped = false;
+    let mut retention_gap = false;
+    loop {
+        if follow_should_stop(cfg.stop.as_ref()) {
+            follow.close();
+            return Ok(RunOutcome::with_code(0));
+        }
+        if deadline.expired() {
+            return Ok(RunOutcome::with_code(124));
+        }
+        let wait = deadline.limit_wait(Duration::from_millis(50));
+        let event = follow.next_event_timeout(wait)?;
+        let Some(event) = event else {
+            if follow.is_finished() {
+                return Ok(RunOutcome::with_code(if retention_gap {
+                    9
+                } else if server_skipped {
+                    1
+                } else {
+                    0
+                }));
+            }
+            continue;
+        };
+        match event {
+            UdpEvent::Gap {
+                first,
+                last,
+                reason,
+            } => {
+                server_skipped = true;
+                if matches!(reason, plasmite::api::UdpSkipReason::Retention) {
+                    retention_gap = true;
+                }
+                if !cfg.quiet_drops {
+                    let mut details = Map::new();
+                    details.insert("first_seq".into(), json!(first));
+                    details.insert("last_seq".into(), json!(last));
+                    details.insert("reason".into(), json!(format!("{reason:?}").to_lowercase()));
+                    emit_notice(
+                        &Notice {
+                            kind: "udp-gap".into(),
+                            time: notice_time_now().unwrap_or_default(),
+                            cmd: "follow".into(),
+                            pool: pool.into(),
+                            message: format!("UDP server skipped sequences {first} through {last}"),
+                            details,
+                        },
+                        cfg.color_mode,
+                        cfg.output_mode,
+                    );
+                }
+            }
+            UdpEvent::Progress {
+                retention_gap: retained,
+                ..
+            } => {
+                if retained && !retention_gap && !cfg.quiet_drops {
+                    emit_notice(
+                        &Notice {
+                            kind: "udp-gap".into(),
+                            time: notice_time_now().unwrap_or_default(),
+                            cmd: "follow".into(),
+                            pool: pool.into(),
+                            message: "UDP server reported a retention gap; range unavailable"
+                                .into(),
+                            details: Map::from_iter([("reason".into(), json!("retention"))]),
+                        },
+                        cfg.color_mode,
+                        cfg.output_mode,
+                    );
+                }
+                retention_gap |= retained;
+                server_skipped |= retained;
+            }
+            UdpEvent::Frame(frame) => {
+                let value = if needs_message(cfg) {
+                    Some(message_to_json(frame.message()?))
+                } else {
+                    None
+                };
+                let matches = match value.as_ref() {
+                    Some(value) => matches_message(cfg, cfg.since_ns, frame.timestamp_ns, value)?,
+                    None => cfg.since_ns.is_none_or(|since| frame.timestamp_ns >= since),
+                };
+                if matches {
+                    if deadline.expired() {
+                        return Ok(RunOutcome::with_code(124));
+                    }
+                    if cfg.output_mode.is_binary() {
+                        emit_lite3(
+                            frame.seq,
+                            frame.timestamp_ns,
+                            &frame.payload,
+                            cfg.output_mode,
+                        )?;
+                    } else {
+                        emit_message(
+                            value.expect("text output decodes message"),
+                            cfg.output_mode,
+                            cfg.color_mode,
+                        )?;
+                    }
+                    deadline.emitted();
+                    if cfg.one {
+                        return Ok(RunOutcome::with_code(0));
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn follow_pool(
     pool: &Pool,
     pool_ref: &str,
@@ -471,15 +587,16 @@ pub(crate) fn follow_pool(
     let mut cursor = Cursor::new();
     // Scan retained frames once. The sequence lower bound skips earlier frames
     // without buffering them and stays fixed if the writer advances the ring.
-    cursor.seek_to(if cfg.since_ns.is_some() || cfg.tail > 0 {
+    cursor.seek_to(if cfg.since_ns.is_some() || cfg.tail > 0 || cfg.no_follow {
         header.tail_off
     } else {
         header.head_off
     } as usize);
+    signal_ready(&cfg);
     let finite = cfg.no_follow || cfg.replay_speed.is_some();
     let mut previous_timestamp = None::<u64>;
     let mut drops = DropReporter::new(&cfg, pool_ref, pool_path.display().to_string());
-    let mut deadline = cfg.timeout.map(|duration| Instant::now() + duration);
+    let mut deadline = FollowDeadline::new(cfg.timeout);
     let mut notify_handle = if cfg.notify {
         notify::open_for_path(pool_path)
     } else {
@@ -490,7 +607,7 @@ pub(crate) fn follow_pool(
         if follow_should_stop(cfg.stop.as_ref()) || (finite && expected > upper) {
             return Ok(drops.finish(0));
         }
-        if deadline.is_some_and(|at| Instant::now() >= at) {
+        if deadline.expired() {
             return Ok(drops.finish(124));
         }
         match cursor.next(pool)? {
@@ -514,39 +631,34 @@ pub(crate) fn follow_pool(
                     None => since_ns.is_none_or(|since| frame.timestamp_ns >= since),
                 };
                 if matches {
-                    if let (Some(speed), Some(previous)) = (cfg.replay_speed, previous_timestamp) {
-                        if speed > 0.0 {
-                            let delay_ns =
-                                (frame.timestamp_ns.saturating_sub(previous) as f64 / speed) as u64;
-                            // Bounded waits keep duplex/caller cancellation responsive.
-                            let until = Instant::now()
-                                .checked_add(Duration::from_nanos(delay_ns))
-                                .ok_or_else(|| {
-                                    Error::new(ErrorKind::Usage)
-                                        .with_message("replay delay is too large")
-                                })?;
-                            while Instant::now() < until {
-                                if follow_should_stop(cfg.stop.as_ref()) {
-                                    return Ok(drops.finish(0));
-                                }
-                                if deadline.is_some_and(|at| Instant::now() >= at) {
-                                    return Ok(drops.finish(124));
-                                }
-                                let wait = until
-                                    .saturating_duration_since(Instant::now())
-                                    .min(Duration::from_millis(50));
-                                let wait = deadline
-                                    .map(|at| {
-                                        at.saturating_duration_since(Instant::now()).min(wait)
-                                    })
-                                    .unwrap_or(wait);
-                                std::thread::sleep(wait);
+                    if let (Some(speed), Some(previous)) = (cfg.replay_speed, previous_timestamp)
+                        && speed > 0.0
+                    {
+                        let delay_ns =
+                            (frame.timestamp_ns.saturating_sub(previous) as f64 / speed) as u64;
+                        // Bounded waits keep duplex/caller cancellation responsive.
+                        let until = Instant::now()
+                            .checked_add(Duration::from_nanos(delay_ns))
+                            .ok_or_else(|| {
+                                Error::new(ErrorKind::Usage)
+                                    .with_message("replay delay is too large")
+                            })?;
+                        while Instant::now() < until {
+                            if follow_should_stop(cfg.stop.as_ref()) {
+                                return Ok(drops.finish(0));
                             }
+                            if deadline.expired() {
+                                return Ok(drops.finish(124));
+                            }
+                            let wait = until
+                                .saturating_duration_since(Instant::now())
+                                .min(Duration::from_millis(50));
+                            std::thread::sleep(deadline.limit_wait(wait));
                         }
                     }
                     // A playback delay may finish on the same wake-up that
                     // crosses the output deadline; check before emitting.
-                    if deadline.is_some_and(|at| Instant::now() >= at) {
+                    if deadline.expired() {
                         return Ok(drops.finish(124));
                     }
                     if follow_should_stop(cfg.stop.as_ref()) {
@@ -567,7 +679,7 @@ pub(crate) fn follow_pool(
                         )?;
                     }
                     previous_timestamp = Some(frame.timestamp_ns);
-                    deadline = cfg.timeout.map(|duration| Instant::now() + duration);
+                    deadline.emitted();
                     if cfg.one {
                         return Ok(drops.finish(0));
                     }
@@ -600,9 +712,7 @@ pub(crate) fn follow_pool(
                     return Ok(drops.finish(0));
                 }
                 drops.flush(false);
-                let wait = deadline
-                    .map(|at| at.saturating_duration_since(Instant::now()).min(backoff))
-                    .unwrap_or(backoff);
+                let wait = deadline.limit_wait(backoff);
                 let waited = notify_handle.as_mut().map(|handle| handle.wait(wait));
                 if matches!(waited, None | Some(NotifyWait::Unavailable)) {
                     notify_handle = None;

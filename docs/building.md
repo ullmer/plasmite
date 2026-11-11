@@ -226,6 +226,25 @@ export PKG_CONFIG_PATH=/path/to/sdk/lib/pkgconfig
 pkg-config --cflags --libs plasmite
 ```
 
+### Linux x86_64 packages
+
+Release SDKs, npm native assets and Python wheels build on Ubuntu 22.04, pinning
+an explicit glibc 2.35 baseline. Python packaging uses `auditwheel` to check both
+bundled native programs before tagging the wheel `manylinux_2_35_x86_64`.
+These packages start with Plasmite 1.3.0. See the
+[distribution guide](record/distribution.md) for the requirements of older releases.
+
+To run the release wheel check against an SDK built on that baseline:
+
+```bash
+PLASMITE_SDK_DIR=/path/to/sdk \
+PLASMITE_MANYLINUX_PLATFORM=manylinux_2_35_x86_64 \
+  bash scripts/python_wheel_smoke.sh
+```
+
+The check rejects a newer glibc dependency instead of merely renaming the wheel.
+Source builds on other hosts can still run the ordinary local wheel smoke.
+
 ### Install a Linux ARM preview
 
 The published [1.0.0 release](https://github.com/sandover/plasmite/releases/tag/v1.0.0)
@@ -271,11 +290,11 @@ just sdk-from-source aarch64-apple-darwin
 
 `release.yml` uploads build artifacts only (SDK tarballs, Python dist artifacts, npm tarball, and release metadata).
 
-`.github/workflows/release-publish.yml` (publish stage) consumes a successful build run's artifacts, runs registry preflight checks, syncs/verifies the Homebrew tap formula, publishes crates/npm/PyPI, and then creates/updates the GitHub release with SDK tarballs + `sha256sums.txt`.
+`.github/workflows/release-publish.yml` consumes verified build artifacts, checks an offline Homebrew candidate, publishes crates/npm/PyPI and GitHub SDK assets, then verifies public downloads against the build's checksums. Existing releases are verified without overwriting notes or assets.
 
-Before any registry publish steps run, `release-publish.yml` verifies that the independently maintained `sandover/homebrew-tap` formula is aligned with the build artifacts (version + URLs + checksums). Update and push that formula locally before a live publish; CI never mutates tap history.
+After successful publication, run `scripts/update_homebrew_formula.sh <tag> ../homebrew-tap --build-run-id <id>`, review the diff, and push the formula. The helper refuses to update until anonymous public downloads match the selected build. `--prepare-only` renders temporary rehearsal candidates without a public download check; never push those candidates. CI never mutates tap history.
 
-After publishing, dispatch `post-release-smoke.yml`. Its macOS Homebrew job installs `sandover/tap/plasmite` and verifies `plasmite --version` for the released version.
+After publishing, dispatch `post-release-smoke.yml`. It checks npm and crates.io on Linux (also PyPI when the release declares Linux wheels), a published PyPI wheel on macOS, and the macOS Homebrew installation.
 
 For low-risk workflow validation after release workflow changes, run a no-publish rehearsal:
 
@@ -293,7 +312,7 @@ If you need to force a specific build run (for example, during incident recovery
 
 ## Performance monitoring policy
 
-- Release-blocking performance checks are local-only and run on the maintainer host with the same power/runtime conditions for baseline and candidate.
+- For hot-path or storage changes, release-blocking performance checks run locally on the maintainer host with the same power/runtime conditions for baseline and candidate.
 - Use:
   - `bash skills/plasmite-release-manager/scripts/compare_local_benchmarks.sh --base-tag <vX.Y.Z> --runs 3`
 - Multi-platform performance sweeps are optional and should be run when platform-sensitive code changes (I/O, mmap, locking, FFI/bindings), not required for every patch release.

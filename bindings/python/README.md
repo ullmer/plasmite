@@ -12,8 +12,12 @@ Published wheels bundle native assets under `plasmite/_native/` on the platforms
 Current packaged-wheel targets:
 - macOS: `x86_64`, `arm64`
 - Windows: `x86_64`
+- Linux: `x86_64`, glibc 2.35 or newer (1.3.0 and later)
 
-Linux currently falls back to source distribution, so runtime use there should come from a system SDK install (for example Homebrew or a GitHub release tarball) unless/until Linux wheels are added.
+The Linux wheel bundles the CLI and library. Both `plasmite` and `pls` use the
+bundled binary. Version 1.2.1 on Linux uses the source package and needs a
+system SDK (Homebrew or a GitHub SDK archive). Wheels since 1.3.0 use the
+stable C ABI through ctypes and support Python 3.10 and newer.
 
 ### Using uv (recommended)
 
@@ -68,16 +72,6 @@ Build a wheel with bundled native assets from a specific SDK directory:
 PLASMITE_SDK_DIR=/path/to/sdk python -m build
 ```
 
-Conformance runner (manifest parity with Rust/Go/Node):
-
-```bash
-cargo build -p plasmite
-cd bindings/python
-PLASMITE_LIB_DIR="$(pwd)/../../target/debug" \
-PLASMITE_BIN="$(pwd)/../../target/debug/plasmite" \
-python3 cmd/plasmite_conformance.py ../../conformance/sample-v0.json
-```
-
 ## Usage
 
 ```python
@@ -100,11 +94,41 @@ with Client("./data") as client:
         print("pool not found")
 ```
 
-`Pool.append(...)`, `Pool.get(...)`, `Pool.tail(...)`, and `Pool.replay(...)` return typed `Message` values by default.
+`Pool.append(...)`, `Pool.get(...)`, and `Pool.tail(...)` return typed `Message` values by default.
 
 Use `append_json(...)` / `get_json(...)` only when you explicitly need raw wire bytes.
 
 `Pool.tail(..., tags=[...])` uses exact tag matching and composes with other filters using AND semantics.
+
+## UDP sender and follower
+
+The UDP client names its server endpoint explicitly. `send_json` and
+`send_lite3` return no storage receipt: success means the operating system
+accepted the datagram. A follower yields original Lite3 frames, explicit server
+skip notices, and progress records. The server must opt in with `serve --udp-follow`.
+The [receive policy](../../spec/udp/v1/SPEC.md#receive-ordering-and-notices)
+requires arrival-order delivery, including late messages and duplicates;
+sequence/progress jumps never establish loss or suppress frames. This source
+change awaits a major release. Finite follows end on terminal progress and may
+leave DATA in flight.
+
+```python
+from plasmite import UdpClient, UdpFollowOptions, UdpFrame, UdpStart
+
+with UdpClient("udp://127.0.0.1:9701") as client:
+    with client.open_pool("sensors") as pool:
+        with pool.follow(UdpFollowOptions(start=UdpStart.new(), live=True)) as follow:
+            pool.send_json({"temperature": 23}, tags=["sensor"])
+            for event in follow:
+                if isinstance(event, UdpFrame):
+                    message = event.message()
+                    print(message.seq, message.data)
+```
+
+Use `UdpStart.last(count)`, `UdpStart.since_ns(timestamp_ns)`, or
+`UdpStart.sequence(seq)` to select retained history. Pass a finite
+`timeout_ms` to `next_event` when a caller needs a bounded wait; `close()` and
+`cancel()` interrupt an active wait within 50 milliseconds.
 
 Pools have bounded retention. A tail normally resumes at the next retained
 message if writes overtake it. Set `error_on_gap=True` when the consumer must
@@ -139,11 +163,18 @@ threads without racing its native handle or freeing it during a call. Independen
 handles can operate concurrently. Message values are owned snapshots and can
 outlive the pool.
 
-Each opened stream owns an independent handle. `tail()` and `replay()` release
-handle locks between reads, including while yielding messages or sleeping for
-replay timing. Consume each generator from one thread at a time.
+Each opened stream owns an independent handle. `tail()` releases handle locks
+between reads, including while yielding messages. Consume each generator from
+one thread at a time.
 
-`close()` waits for an active native call to finish; it does not interrupt a
-blocking stream read. Pass a finite `timeout_ms` when opening a stream if another
-thread needs to close it within a bounded wait. A stream without a timeout can
-keep `close()` waiting indefinitely.
+A stream's `cancel()` interrupts a read while it waits for messages; `close()`
+cancels first, then waits for the active call and its result copy before freeing
+the handle. `next_wait(timeout_ms)` returns `(status, value)`: 0 means wait expired,
+1 carries a message/frame, 2 means finished, and 3 means cancelled. A zero budget
+polls once; wait expiry retains position. The original open-time `timeout_ms`
+still bounds the stream's lifetime. High-level `tail(cancel=event)` accepts a
+`threading.Event` and checks it during bounded waits. Cancellation cannot interrupt
+an operating-system file lock already in progress.
+
+For playback timing, use ordinary streams and an application scheduler; see the
+[next major upgrade guide](../../docs/record/upgrading-next-major.md#sdk-applications-control-playback-timing).

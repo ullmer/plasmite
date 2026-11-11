@@ -5,7 +5,7 @@ Start with the task you want to do:
 | I want to… | Read |
 | --- | --- |
 | Send and read messages on one machine | [Cookbook](cookbook.md) |
-| Send small datagrams to a pool | [UDP input](record/serving.md#send-udp-messages) |
+| Send and follow through UDP | [UDP messages](record/serving.md#send-udp-messages) |
 | Share a pool with another machine | [Share your first pool](record/serving.md#share-your-first-pool) |
 | Share through a Tailscale network | [Tailscale setup](record/serving.md#use-tailscale) |
 | Use shared pools in a browser | [Browser setup](record/serving.md#open-pools-in-a-browser) |
@@ -13,6 +13,7 @@ Start with the task you want to do:
 | Revoke access or remove a saved connection | [Manage access](record/serving.md#manage-access) |
 | Run a server with my own certificate or proxy | [Deploy a server](record/serving.md#deploy-a-server) |
 | Fix a connection | [Troubleshooting](record/serving.md#troubleshoot-a-connection) |
+| Prepare for the next major release | [Next major upgrade](record/upgrading-next-major.md) |
 | Upgrade from an earlier release | [Upgrade to 1.0](record/upgrading-1.0.md) |
 | Install Plasmite | [Install channels](record/distribution.md#install-matrix) |
 | Install on Raspberry Pi or Linux ARM | [Published ARM SDK installation (preview)](record/distribution.md#linux-arm-sdk-preview-install) |
@@ -25,6 +26,8 @@ Start with the task you want to do:
   operation, and recovery.
 - [Distribution](record/distribution.md): supported platforms, install
   channels, and software development kit (SDK) layout.
+- [UDP versus HTTP measurements](performance/udp-transport.md): compare measured
+  delivery, latency, and datagram-size support.
 - [Transport measurements](performance/transport-comparison.md): compare
   native and Model Context Protocol (MCP) performance.
 - [Windows access measurements](performance/windows-access-1.0.md): compare
@@ -36,6 +39,7 @@ For exact contracts, start with the [specifications](../spec/README.md):
 
 - [CLI](../spec/v0/SPEC.md)
 - [UDP input](../spec/udp/v0/SPEC.md)
+- [UDP transport](../spec/udp/v1/SPEC.md)
 - [Public API](../spec/api/v0/SPEC.md)
 - [Remote HTTP protocol](../spec/remote/v0/SPEC.md)
 - [MCP](../spec/mcp/2025-11-25/SPEC.md)
@@ -59,7 +63,9 @@ and specifications above:
 - [Proposed CLI surface design history](proposals/cli-surface.md)
 - [UDP input design](proposals/udp-input.md): read when designing a small
   datagram input for an existing pool.
+- [Full UDP transport proposal](proposals/udp-transport.md): read when designing
+  UDP feed and follow through the CLI and native APIs.
 
 The repository's `.ergo/` backlog and journal track planned work and results.
 
-CLI script migration: [Upgrading to 2.0](record/upgrading-2.0.md).
+CLI script migration: [Upgrading to 1.2.0](record/upgrading-1.2.md).

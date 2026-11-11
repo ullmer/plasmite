@@ -62,7 +62,6 @@ fn create_feed_fetch_follow_flow() {
             pool_dir.to_str().unwrap(),
             "feed",
             "testpool",
-            "--data",
             "{\"x\":1}",
             "--tag",
             "ping",
@@ -140,7 +139,6 @@ fn feed_stdout_contains_the_complete_message() {
             pool_dir.to_str().unwrap(),
             "feed",
             "testpool",
-            "--data",
             "{\"x\":1}",
         ])
         .args(["--format", "json"])
@@ -179,7 +177,6 @@ fn emit_short_file_flag_reads_single_json_file() {
             pool_dir.to_str().unwrap(),
             "feed",
             "demo",
-            "--data",
             "-f",
             input_file.to_str().unwrap(),
         ])
@@ -231,7 +228,6 @@ fn feed_file_reads_multiple_json_records() {
             pool_dir.to_str().unwrap(),
             "feed",
             "demo",
-            "--data",
             "--input-format",
             "json",
             "--file",
@@ -298,7 +294,6 @@ fn feed_file_auto_handles_multiline_json_data() {
             pool_dir.to_str().unwrap(),
             "feed",
             "demo",
-            "--data",
             "--file",
             input_file.to_str().unwrap(),
         ])
@@ -345,7 +340,7 @@ fn emit_retries_when_pool_is_busy() {
 
     let pool_path = pool_dir.join("busy.plasmite");
     let file = File::open(&pool_path).expect("open pool");
-    file.try_lock_exclusive().expect("try lock");
+    file.try_lock().expect("try lock");
 
     let (tx, rx) = mpsc::channel();
     let pool_dir_str = pool_dir.to_str().unwrap().to_string();
@@ -356,7 +351,6 @@ fn emit_retries_when_pool_is_busy() {
                 &pool_dir_str,
                 "feed",
                 "busy",
-                "--data",
                 "{\"x\":1}",
                 "--retry",
                 "5",
@@ -370,7 +364,7 @@ fn emit_retries_when_pool_is_busy() {
     });
 
     thread::sleep(Duration::from_millis(150));
-    fs2::FileExt::unlock(&file).expect("unlock");
+    file.unlock().expect("unlock");
 
     let output = rx.recv_timeout(Duration::from_secs(2)).expect("output");
     assert!(
@@ -401,13 +395,7 @@ fn feed_auto_handles_pretty_json_data() {
     assert!(create.status.success());
 
     let mut emit_out = cmd()
-        .args([
-            "--dir",
-            pool_dir.to_str().unwrap(),
-            "feed",
-            "demo",
-            "--data",
-        ])
+        .args(["--dir", pool_dir.to_str().unwrap(), "feed", "demo"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .args(["--format", "json"])
@@ -453,7 +441,6 @@ fn feed_file_tty_emits_complete_json_messages() {
         pool_dir.to_str().unwrap(),
         "feed",
         "demo",
-        "--data",
         "--file",
         input_file.to_str().unwrap(),
         "--input-format",
@@ -496,7 +483,6 @@ fn feed_json_format_accepts_pretty_json_data() {
             pool_dir.to_str().unwrap(),
             "feed",
             "demo",
-            "--data",
             "--input-format",
             "json",
         ])
@@ -530,7 +516,6 @@ fn emit_create_flag_creates_missing_pool() {
             pool_dir.to_str().unwrap(),
             "feed",
             "autopool",
-            "--data",
             "{\"x\":1}",
             "--create",
         ])
@@ -548,7 +533,7 @@ fn emit_create_flag_creates_missing_pool() {
 #[test]
 fn emit_missing_pool_hint_suggests_create() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let pool_dir = temp.path().join("pools");
+    let pool_dir = temp.path().join("pools with spaces");
 
     let output = cmd()
         .args([
@@ -556,7 +541,6 @@ fn emit_missing_pool_hint_suggests_create() {
             pool_dir.to_str().unwrap(),
             "feed",
             "missing",
-            "--data",
             "{\"x\":1}",
         ])
         .args(["--format", "json"])
@@ -568,8 +552,12 @@ fn emit_missing_pool_hint_suggests_create() {
     let inner = err.get("error").and_then(|v| v.as_object()).expect("error");
     assert_eq!(inner.get("kind").and_then(|v| v.as_str()), Some("NotFound"));
     let hint = inner.get("hint").and_then(|v| v.as_str()).unwrap_or("");
-    assert!(hint.contains("exact command"));
-    assert!(hint.contains("plasmite pool create missing"));
+    assert!(hint.contains("--create"));
+    assert_eq!(
+        inner["path"],
+        pool_dir.join("missing.plasmite").to_str().unwrap()
+    );
+    assert!(!pool_dir.exists());
 }
 
 #[test]
@@ -615,7 +603,6 @@ fn emit_remote_url_happy_path_appends_message() {
             pool_dir.to_str().unwrap(),
             "feed",
             &pool_url,
-            "--data",
             "{\"x\":1}",
             "--tag",
             "ping",
@@ -632,6 +619,20 @@ fn emit_remote_url_happy_path_appends_message() {
         value.get("meta").and_then(|v| v.get("tags")),
         Some(&json!(["ping"]))
     );
+    let copied = cmd()
+        .args(["feed", &pool_url, &value.to_string(), "--format", "json"])
+        .env("PLASMITE_ACCESS_HOME", &access_home)
+        .output()
+        .expect("copy remote message");
+    assert!(
+        copied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&copied.stderr)
+    );
+    let message = parse_json(std::str::from_utf8(&copied.stdout).unwrap());
+    assert_eq!(message["seq"], 2);
+    assert_eq!(message["data"], value["data"]);
+    assert_eq!(message["meta"], value["meta"]);
 }
 
 #[test]
@@ -640,7 +641,6 @@ fn emit_remote_url_rejects_api_shaped_path() {
         .args([
             "feed",
             "http://localhost:9170/v0/pools/demo/append",
-            "--data",
             "{\"x\":1}",
         ])
         .args(["--format", "json"])
@@ -659,7 +659,7 @@ fn emit_remote_url_rejects_api_shaped_path() {
 #[test]
 fn emit_remote_url_rejects_trailing_slash() {
     let output = cmd()
-        .args(["feed", "http://localhost:9170/demo/", "--data", "{\"x\":1}"])
+        .args(["feed", "http://localhost:9170/demo/", "{\"x\":1}"])
         .args(["--format", "json"])
         .output()
         .expect("feed");
@@ -679,7 +679,6 @@ fn emit_remote_url_rejects_create_flag() {
         .args([
             "feed",
             "http://localhost:9170/demo",
-            "--data",
             "--create",
             "{\"x\":1}",
         ])
@@ -714,7 +713,6 @@ fn emit_remote_create_rejected() {
         .args([
             "feed",
             "http://localhost:9170/demo",
-            "--data",
             "--create",
             "{\"x\":1}",
         ])
@@ -756,7 +754,6 @@ fn feed_streams_json_values_from_stdin() {
             pool_dir.to_str().unwrap(),
             "feed",
             "testpool",
-            "--data",
             "--input-format",
             "json",
         ])
@@ -1324,4 +1321,77 @@ fn feed_lite3_raw_allows_empty_stream_and_rejects_invalid_payloads() {
     let raw = fetch_output(&pool_dir, "target", "1", &["--format", "lite3-raw"]);
     assert!(raw.status.success());
     assert_eq!(raw.stdout, payload);
+}
+
+#[test]
+fn create_size_implies_creation_for_feed_and_tap_without_changing_existing_pools() {
+    for family in ["feed", "tap"] {
+        let temp = tempfile::tempdir().unwrap();
+        let pool_path = temp.path().join("sized.plasmite");
+        let run = |pool: &str, size: Option<&str>| {
+            let mut command = cmd();
+            command.arg("--dir").arg(temp.path()).args([family, pool]);
+            if let Some(size) = size {
+                command.args(["--create-size", size]);
+            }
+            if family == "feed" {
+                command.arg("{\"value\":1}");
+            } else {
+                command.args([
+                    "--quiet",
+                    "--",
+                    env!("CARGO_BIN_EXE_plasmite"),
+                    "version",
+                    "--format",
+                    "json",
+                ]);
+            }
+            command.output().unwrap()
+        };
+        let missing = run("missing", None);
+        assert_eq!(missing.status.code(), Some(3));
+        assert!(!temp.path().join("missing.plasmite").exists());
+        let invalid = run("invalid-size", Some("bad"));
+        assert_eq!(invalid.status.code(), Some(2));
+        assert!(!temp.path().join("invalid-size.plasmite").exists());
+        let created = run("sized", Some("64K"));
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+        assert_eq!(std::fs::metadata(&pool_path).unwrap().len(), 65536);
+        let original = Pool::open(&pool_path).unwrap().get_message(1).unwrap();
+        let reopened = run("sized", Some("1M"));
+        assert!(
+            reopened.status.success(),
+            "{}",
+            String::from_utf8_lossy(&reopened.stderr)
+        );
+        assert_eq!(std::fs::metadata(&pool_path).unwrap().len(), 65536);
+        let retained = Pool::open(&pool_path).unwrap().get_message(1).unwrap();
+        assert_eq!(retained.seq, original.seq);
+        assert_eq!(retained.time, original.time);
+        assert_eq!(retained.data, original.data);
+    }
+}
+
+#[test]
+fn remote_and_udp_feed_reject_create_size_without_waiting_for_a_server() {
+    for target in ["http://localhost:9170/demo", "udp://127.0.0.1:9701/demo"] {
+        let output = cmd()
+            .args([
+                "feed",
+                target,
+                "--create-size",
+                "64K",
+                "{}",
+                "--format",
+                "json",
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert_eq!(parse_error_json(&output.stderr)["error"]["kind"], "Usage");
+    }
 }

@@ -1,10 +1,11 @@
 //! Read one complete CLI message at a time and write framed Lite3 messages.
 
+use crate::interface_wire::{LITE3_FRAME_HEADER_LEN, Lite3FrameHeader};
 use clap::ValueEnum;
 use plasmite::api::{Error, ErrorKind, lite3};
 use serde_json::{Map, Number, Value};
-use serde_yaml_ng::Value as YamlValue;
 use std::io::{self, BufRead, BufReader, Read, Write};
+use yaml_serde::Value as YamlValue;
 
 pub(crate) const LITE3_STREAM_MAGIC: &[u8; 4] = b"PLS1";
 const MAX_PAYLOAD_BYTES: usize = lite3::MAX_LITE3_BUF;
@@ -53,7 +54,7 @@ where
                     if rest != *b"--" {
                         return Err(input_error("unknown input format"));
                     }
-                    let prefix = io::Cursor::new(b"---".to_vec());
+                    let prefix = io::Cursor::new(b"---");
                     read_yaml_records(BufReader::new(prefix.chain(reader)), &mut on_record)
                 }
                 b'P' => {
@@ -210,7 +211,7 @@ fn parse_yaml_document(bytes: &[u8]) -> Result<Value, Error> {
     let _: Value = serde_saphyr::from_slice_with_options(bytes, options)
         .map_err(|err| input_error("invalid or unsupported YAML message").with_source(err))?;
     // This parser retains tagged values and exact numeric types that the budget pass discards.
-    let yaml: YamlValue = serde_yaml_ng::from_slice(bytes)
+    let yaml: YamlValue = yaml_serde::from_slice(bytes)
         .map_err(|err| input_error("invalid YAML message").with_source(err))?;
     yaml_to_json(yaml)
 }
@@ -273,13 +274,16 @@ where
     }
     let mut count = 0;
     loop {
-        let mut header = [0; 20];
+        let mut header = [0; LITE3_FRAME_HEADER_LEN];
         if !read_exact_or_eof(reader, &mut header)? {
             return Ok(count);
         }
-        let seq = u64::from_be_bytes(header[..8].try_into().expect("fixed header"));
-        let timestamp_ns = u64::from_be_bytes(header[8..16].try_into().expect("fixed header"));
-        let len = u32::from_be_bytes(header[16..].try_into().expect("fixed header")) as usize;
+        let Lite3FrameHeader {
+            seq,
+            timestamp_ns,
+            payload_len,
+        } = Lite3FrameHeader::decode(header);
+        let len = payload_len as usize;
         if len > MAX_PAYLOAD_BYTES {
             return Err(input_error("Lite3 payload exceeds 256 MiB"));
         }
@@ -336,11 +340,13 @@ pub(crate) fn write_frame(
     if payload.len() > MAX_PAYLOAD_BYTES {
         return Err(input_error("Lite3 payload exceeds 256 MiB"));
     }
-    let len = u32::try_from(payload.len()).expect("256 MiB fits u32");
+    let header = Lite3FrameHeader {
+        seq,
+        timestamp_ns,
+        payload_len: u32::try_from(payload.len()).expect("256 MiB fits u32"),
+    };
     writer
-        .write_all(&seq.to_be_bytes())
-        .and_then(|()| writer.write_all(&timestamp_ns.to_be_bytes()))
-        .and_then(|()| writer.write_all(&len.to_be_bytes()))
+        .write_all(&header.encode())
         .and_then(|()| writer.write_all(payload))
         .and_then(|()| writer.flush())
         .map_err(write_error)
@@ -500,7 +506,7 @@ mod tests {
     #[test]
     fn yaml_preserves_json_types_and_rejects_unsupported_values() {
         let mut seen = Vec::new();
-        let input = b"---\ndata:\n  count: 18446744073709551615\n  ratio: 1.0\n  text: '2026-10-12'\n...\n---\ndata:\n  wrong: !Thing 2\n...\n";
+        let input = b"---\ndata:\n  count: 18446744073709551615\n  minimum: -9223372036854775808\n  ratio: 1.0\n  text: '2026-10-12'\n  '1': [null, false, 'false']\n  choice: yes\n  code: 000123\n  label: 1_000\n...\n---\ndata:\n  wrong: !Thing 2\n...\n";
         let err = read_records(Cursor::new(input), InputFormat::Auto, |record| {
             let InputRecord::Json(value) = record else {
                 panic!("YAML")
@@ -511,15 +517,34 @@ mod tests {
         .expect_err("custom tag rejected");
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0]["data"]["count"].as_u64(), Some(u64::MAX));
-        assert!(seen[0]["data"]["ratio"].is_f64());
+        assert_eq!(seen[0]["data"]["minimum"].as_i64(), Some(i64::MIN));
+        assert_eq!(seen[0]["data"]["ratio"], serde_json::json!(1.0));
         assert_eq!(seen[0]["data"]["text"], "2026-10-12");
-        assert_eq!(err.message(), Some("YAML tags are not supported"));
+        assert_eq!(
+            seen[0]["data"]["1"],
+            serde_json::json!([null, false, "false"])
+        );
+        assert_eq!(seen[0]["data"]["choice"], "yes");
+        assert_eq!(seen[0]["data"]["code"], "000123");
+        assert_eq!(seen[0]["data"]["label"], "1_000");
+        assert_eq!(err.kind(), ErrorKind::Usage);
         for input in [
             b"---\ndata: {x: .nan}\n...\n".as_slice(),
             b"---\ndata: {1: hi}\n...\n",
+            b"---\ndata: {true: hi}\n...\n",
+            b"---\ndata: {count: 18446744073709551616}\n...\n",
+            b"---\ndata: {!Thing x: hi}\n...\n",
+            b"---\ndata: {<<: {x: 1}}\n...\n",
             b"---\na: &x [1]\nb: *x\n...\n",
         ] {
-            assert!(read_records(Cursor::new(input), InputFormat::Yaml, |_| Ok(())).is_err());
+            let error = read_records(Cursor::new(input), InputFormat::Yaml, |_| {
+                panic!(
+                    "unsupported YAML reached the caller: {}",
+                    String::from_utf8_lossy(input)
+                )
+            })
+            .expect_err("unsupported YAML");
+            assert_eq!(error.kind(), ErrorKind::Usage);
         }
     }
 

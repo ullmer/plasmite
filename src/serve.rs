@@ -53,7 +53,7 @@ use activity::{ActivityRegistry, RequestActivity};
 #[path = "browser_session.rs"]
 mod browser_session;
 use crate::interface_error_kind;
-use crate::interface_wire::{MessageWire, error_policy};
+use crate::interface_wire::{LITE3_FRAME_HEADER_LEN, Lite3FrameHeader, MessageWire, error_policy};
 use crate::pool_info_json::pool_info_json;
 use browser_session::{BrowserSessions, COOKIE_NAME, LIFETIME};
 #[path = "oauth.rs"]
@@ -153,18 +153,17 @@ fn check_grant(grant: Option<&AccessGrant>) -> Result<(), Error> {
     }
 }
 
-#[derive(Clone)]
 struct AppState {
     client: LocalClient,
     secure_access: Option<Arc<AccessStore>>,
     oauth: Option<Arc<OauthService>>,
-    browser_sessions: Arc<BrowserSessions>,
+    browser_sessions: BrowserSessions,
     local_admin: bool,
     max_tail_timeout_ms: u64,
     tail_semaphore: Arc<Semaphore>,
     mcp_semaphore: Arc<Semaphore>,
     storage_executor: StorageExecutor,
-    ui_pool_watch: Arc<Mutex<Option<watch::Sender<Value>>>>,
+    ui_pool_watch: Mutex<Option<watch::Sender<Value>>>,
     activity: ActivityRegistry,
 }
 
@@ -173,6 +172,7 @@ pub(crate) async fn serve_secure_pair(
     remote: ServeConfig,
     access: Arc<AccessStore>,
     udp_bind: Option<SocketAddr>,
+    udp_follow: bool,
 ) -> Result<(), Error> {
     validate_config(&local)?;
     validate_config(&remote)?;
@@ -287,6 +287,11 @@ pub(crate) async fn serve_secure_pair(
             "Maximum UDP message size: 65507 bytes including routing. Larger messages are discarded."
         );
         eprintln!("Sending does not confirm storage. UDP has no authentication or encryption.");
+        if udp_follow {
+            eprintln!(
+                "UDP follow is enabled: anyone who can reach this socket can read served pools."
+            );
+        }
         if !address.ip().is_loopback() {
             eprintln!("Allow only trusted senders through a protected network.");
         }
@@ -318,6 +323,8 @@ pub(crate) async fn serve_secure_pair(
             socket,
             LocalClient::new().with_pool_dir(&local.pool_dir),
             shutdown_rx,
+            udp_follow,
+            local.max_concurrent_tails,
         ));
     }
     // Publish readiness only after every listener has bound and started.
@@ -410,11 +417,11 @@ async fn prepare_server_with_access(
             .transpose()?
             .flatten()
     };
-    let browser_sessions = Arc::new(BrowserSessions::new(if local_admin {
+    let browser_sessions = BrowserSessions::new(if local_admin {
         None
     } else {
         secure_access.clone()
-    })?);
+    })?;
     let state = Arc::new(AppState {
         client: LocalClient::new().with_pool_dir(config.pool_dir.clone()),
         secure_access,
@@ -427,7 +434,7 @@ async fn prepare_server_with_access(
         // Reuse the existing server concurrency budget instead of adding another
         // public tuning flag. Storage operations are shorter lived than tails.
         storage_executor: StorageExecutor::new(config.max_concurrent_tails),
-        ui_pool_watch: Arc::new(Mutex::new(None)),
+        ui_pool_watch: Mutex::new(None),
         activity,
     });
 
@@ -618,17 +625,18 @@ async fn remote_browser_guard(
         drain_rejected_body(request).await;
         return error_response(err);
     }
-    if path == "/mcp" && request.method() == Method::POST {
-        if let Some(oauth) = &state.oauth {
-            let bearer = request
-                .headers()
-                .get(header::AUTHORIZATION)
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.strip_prefix("Bearer "));
-            if bearer.and_then(|value| oauth.grant(value)).is_none() {
-                drain_rejected_body(request).await;
-                return oauth.challenge();
-            }
+    if path == "/mcp"
+        && request.method() == Method::POST
+        && let Some(oauth) = &state.oauth
+    {
+        let bearer = request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "));
+        if bearer.and_then(|value| oauth.grant(value)).is_none() {
+            drain_rejected_body(request).await;
+            return oauth.challenge();
         }
     }
     next.run(request).await
@@ -1178,10 +1186,10 @@ async fn browser_session_status(
 }
 
 async fn browser_logout(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if let Some(token) = cookie_token(&headers) {
-        if let Err(err) = state.browser_sessions.remove(token) {
-            return error_response(err);
-        }
+    if let Some(token) = cookie_token(&headers)
+        && let Err(err) = state.browser_sessions.remove(token)
+    {
+        return error_response(err);
     }
     let mut response = json_response(json!({"authenticated": false}));
     response
@@ -2039,7 +2047,7 @@ async fn append_message(
         })
         .await;
     match result {
-        Ok(message) => json_response(json!({ "message": message_json(&message) })),
+        Ok(message) => json_response(Value::from_iter([("message", message_json(message))])),
         Err(err) => error_response(err),
     }
 }
@@ -2058,12 +2066,11 @@ async fn append_lite3(
     if let Some(content_type) = headers
         .get("content-type")
         .and_then(|value| value.to_str().ok())
+        && !content_type.starts_with("application/x-plasmite-lite3")
     {
-        if !content_type.starts_with("application/x-plasmite-lite3") {
-            return error_response(
-                Error::new(ErrorKind::Usage).with_message("invalid content-type for lite3 append"),
-            );
-        }
+        return error_response(
+            Error::new(ErrorKind::Usage).with_message("invalid content-type for lite3 append"),
+        );
     }
     if payload.is_empty() {
         return error_response(
@@ -2086,7 +2093,7 @@ async fn append_lite3(
         })
         .await;
     match result {
-        Ok(message) => json_response(json!({ "message": message_json(&message) })),
+        Ok(message) => json_response(Value::from_iter([("message", message_json(message))])),
         Err(err) => error_response(err),
     }
 }
@@ -2115,7 +2122,7 @@ async fn get_message(
         .await;
 
     match result {
-        Ok(message) => json_response(json!({ "message": message_json(&message) })),
+        Ok(message) => json_response(Value::from_iter([("message", message_json(message))])),
         Err(err) => error_response(err),
     }
 }
@@ -2294,15 +2301,11 @@ fn prepare_tail_runtime(
             "remote Lite3 tails do not support gap_policy=error because the stream has no error frame",
         ));
     }
-    if let Some(timeout_ms) = query.timeout_ms
-        && timeout_ms > state.max_tail_timeout_ms
-    {
-        return Err(Error::new(ErrorKind::Usage)
-            .with_message("tail timeout exceeds server limit")
-            .with_hint(format!("Use timeout_ms <= {}.", state.max_tail_timeout_ms)));
-    }
     let permit = acquire_tail_permit(state)?;
-    let timeout_ms = query.timeout_ms.unwrap_or(state.max_tail_timeout_ms);
+    let timeout_ms = query
+        .timeout_ms
+        .unwrap_or(state.max_tail_timeout_ms)
+        .min(state.max_tail_timeout_ms);
     let timeout = Duration::from_millis(timeout_ms);
     let deadline = Instant::now()
         .checked_add(timeout)
@@ -2364,8 +2367,8 @@ fn spawn_tail_stream_response(
                 &pool,
                 options,
                 encoding,
-                tx.clone(),
-                producer_grant.clone(),
+                &tx,
+                producer_grant.as_ref(),
                 deadline,
             )
         });
@@ -2397,8 +2400,8 @@ fn stream_tail_bytes(
     pool: &plasmite::api::Pool,
     mut options: TailOptions,
     encoding: TailStreamEncoding,
-    tx: mpsc::Sender<Result<Bytes, Error>>,
-    grant: Option<AccessGrant>,
+    tx: &mpsc::Sender<Result<Bytes, Error>>,
+    grant: Option<&AccessGrant>,
     deadline: Instant,
 ) -> Result<(), Error> {
     // Admission, producer scheduling, reads, and backpressure share one budget.
@@ -2407,15 +2410,15 @@ fn stream_tail_bytes(
         TailStreamEncoding::Jsonl | TailStreamEncoding::Sse => {
             let mut tail = pool.tail(options);
             while let Some(message) = tail.next_message()? {
-                if grant.as_ref().is_some_and(AccessGrant::is_revoked) {
+                if grant.is_some_and(AccessGrant::is_revoked) {
                     break;
                 }
                 let encoded = match encoding {
-                    TailStreamEncoding::Jsonl => encode_jsonl_message(&message)?,
-                    TailStreamEncoding::Sse => encode_sse_message(&message)?,
+                    TailStreamEncoding::Jsonl => encode_jsonl_message(message)?,
+                    TailStreamEncoding::Sse => encode_sse_message(message)?,
                     TailStreamEncoding::Lite3 => unreachable!("handled in separate branch"),
                 };
-                if !send_tail_result(&tx, Ok(encoded), grant.as_ref(), deadline) {
+                if !send_tail_result(tx, Ok(encoded), grant, deadline) {
                     break;
                 }
             }
@@ -2423,12 +2426,12 @@ fn stream_tail_bytes(
         TailStreamEncoding::Lite3 => {
             let mut tail = pool.tail_lite3(options);
             while let Some(frame) = tail.next_frame()? {
-                if grant.as_ref().is_some_and(AccessGrant::is_revoked) {
+                if grant.is_some_and(AccessGrant::is_revoked) {
                     break;
                 }
                 lite3::validate_bytes(&frame.payload)?;
                 let encoded = encode_lite3_stream_frame(&frame)?;
-                if !send_tail_result(&tx, Ok(encoded), grant.as_ref(), deadline) {
+                if !send_tail_result(tx, Ok(encoded), grant, deadline) {
                     break;
                 }
             }
@@ -2461,7 +2464,7 @@ fn send_tail_result(
     }
 }
 
-fn encode_message_payload(message: &plasmite::api::Message) -> Result<Vec<u8>, Error> {
+fn encode_message_payload(message: plasmite::api::Message) -> Result<Vec<u8>, Error> {
     serde_json::to_vec(&message_json(message)).map_err(|err| {
         Error::new(ErrorKind::Internal)
             .with_message("failed to encode message")
@@ -2469,13 +2472,13 @@ fn encode_message_payload(message: &plasmite::api::Message) -> Result<Vec<u8>, E
     })
 }
 
-fn encode_jsonl_message(message: &plasmite::api::Message) -> Result<Bytes, Error> {
+fn encode_jsonl_message(message: plasmite::api::Message) -> Result<Bytes, Error> {
     let mut payload = encode_message_payload(message)?;
     payload.push(b'\n');
     Ok(Bytes::from(payload))
 }
 
-fn encode_sse_message(message: &plasmite::api::Message) -> Result<Bytes, Error> {
+fn encode_sse_message(message: plasmite::api::Message) -> Result<Bytes, Error> {
     let mut payload = encode_message_payload(message)?;
     // SSE event frame: clients parse one JSON message per event.
     let mut frame = b"event: message\ndata: ".to_vec();
@@ -2541,14 +2544,8 @@ fn pool_ref_from_request(pool: &str) -> Result<PoolRef, Error> {
     Ok(PoolRef::name(pool))
 }
 
-fn message_json(message: &plasmite::api::Message) -> serde_json::Value {
-    serde_json::to_value(MessageWire::new(
-        message.seq,
-        message.time.clone(),
-        message.meta.tags.clone(),
-        message.data.clone(),
-    ))
-    .expect("message wire data is serializable")
+fn message_json(message: plasmite::api::Message) -> Value {
+    MessageWire::new(message.seq, message.time, message.meta.tags, message.data).into_json()
 }
 
 fn normalize_tags(raw: Vec<String>) -> Vec<String> {
@@ -2606,10 +2603,13 @@ fn encode_lite3_stream_frame(frame: &plasmite::api::FrameRef) -> Result<Bytes, E
     let payload_len: u32 = frame.payload.len().try_into().map_err(|_| {
         Error::new(ErrorKind::Usage).with_message("lite3 payload exceeds max frame length")
     })?;
-    let mut buf = Vec::with_capacity(8 + 8 + 4 + payload_len as usize);
-    buf.extend_from_slice(&frame.seq.to_be_bytes());
-    buf.extend_from_slice(&frame.timestamp_ns.to_be_bytes());
-    buf.extend_from_slice(&payload_len.to_be_bytes());
+    let header = Lite3FrameHeader {
+        seq: frame.seq,
+        timestamp_ns: frame.timestamp_ns,
+        payload_len,
+    };
+    let mut buf = Vec::with_capacity(LITE3_FRAME_HEADER_LEN + payload_len as usize);
+    buf.extend_from_slice(&header.encode());
     buf.extend_from_slice(&frame.payload);
     Ok(Bytes::from(buf))
 }
@@ -3101,13 +3101,13 @@ mod tests {
             client: LocalClient::new().with_pool_dir(temp.path()),
             secure_access: None,
             oauth: None,
-            browser_sessions: Arc::new(BrowserSessions::new(None).unwrap()),
+            browser_sessions: BrowserSessions::new(None).unwrap(),
             local_admin: true,
             max_tail_timeout_ms: 30_000,
             tail_semaphore: Arc::new(Semaphore::new(1)),
             mcp_semaphore: Arc::new(Semaphore::new(1)),
             storage_executor: StorageExecutor::new(1),
-            ui_pool_watch: Arc::new(Mutex::new(None)),
+            ui_pool_watch: Mutex::new(None),
             activity: Default::default(),
         });
         let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -3178,13 +3178,13 @@ mod tests {
             client: LocalClient::new().with_pool_dir(temp.path()),
             secure_access: None,
             oauth: None,
-            browser_sessions: Arc::new(BrowserSessions::new(None).unwrap()),
+            browser_sessions: BrowserSessions::new(None).unwrap(),
             local_admin: false,
             max_tail_timeout_ms: 30_000,
             tail_semaphore: Arc::new(Semaphore::new(1)),
             mcp_semaphore: Arc::new(Semaphore::new(1)),
             storage_executor: StorageExecutor::new(1),
-            ui_pool_watch: Arc::new(Mutex::new(None)),
+            ui_pool_watch: Mutex::new(None),
             activity: Default::default(),
         };
         assert_eq!(

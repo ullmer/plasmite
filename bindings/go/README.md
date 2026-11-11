@@ -1,7 +1,7 @@
 # Plasmite Go Bindings
 
 These bindings wrap the `libplasmite` C ABI via cgo and expose typed Go contracts.
-`Append`, `Get`, `Tail`, and `Replay` return `*Message` values, while Lite3 APIs
+`Append`, `Get`, and `Tail` return `*Message` values, while Lite3 APIs
 provide raw binary frames. These bindings operate on local pools; they do
 not expose the Rust/CLI secure native access-key client. Messages disappear
 when the bounded ring fills, independent of consumer progress.
@@ -14,6 +14,7 @@ for CLI and sharing changes.
 
 - `github.com/sandover/plasmite/bindings/go/local` — cgo-backed local client and pool operations.
 - `github.com/sandover/plasmite/bindings/go/api` — pure Go contracts and shared model types.
+- `github.com/sandover/plasmite/bindings/go/udp` — cgo-backed UDP sender and follower.
 
 Install the local binding package in a downstream module:
 
@@ -57,19 +58,6 @@ go test ./...
 ```
 
 `just bindings-go-test` runs this override automatically for CI and local development.
-
-Conformance runner (manifest parity with Rust/Node/Python):
-
-```bash
-cargo build -p plasmite
-cd bindings/go
-DYLD_LIBRARY_PATH="$(pwd)/../../target/debug${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
-LD_LIBRARY_PATH="$(pwd)/../../target/debug${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-PKG_CONFIG=/usr/bin/true \
-CGO_CFLAGS="-I$(pwd)/../../include" \
-CGO_LDFLAGS="-L$(pwd)/../../target/debug" \
-go run ./cmd/plasmite-conformance ../../conformance/sample-v0.json
-```
 
 ## Usage
 
@@ -147,8 +135,9 @@ func main() {
 
 `TailOptions.Tags` applies exact tag matching and composes with other filters
 via AND semantics. `SinceSeq` is inclusive; save the last handled sequence
-plus one to resume. `Timeout` bounds each blocking read so the goroutine can
-check cancellation; it does not end the tail on its own. Use a context deadline
+plus one to resume. Tails retain one native reader across quiet waits.
+`Timeout` bounds each wait; waits also check context cancellation at least every
+50 milliseconds while idle. It does not end the tail on its own. Use a context deadline
 to bound the whole operation, or `MaxMessages` to stop after a chosen number
 of delivered messages.
 
@@ -187,10 +176,84 @@ if handlerErr != nil {
 The error channel receives `ErrorRetentionGap` before the first message or
 Lite3 frame after the gap. Tag filters do not conceal the error.
 
+### UDP sender and follower
+
+The `udp` package takes an explicit endpoint and opens a named pool. Sending
+returns an error only for local validation or operating-system send failures;
+a nil error does not confirm storage. A follower yields frames, explicit server
+skip notices, and progress events. Its context cancels a blocked wait within
+50 milliseconds. The
+[receive policy](../../spec/udp/v1/SPEC.md#receive-ordering-and-notices) requires
+arrival-order delivery, including late messages and duplicates; sequence/progress
+jumps never establish loss or suppress frames. This source change awaits a
+major release.
+Finite follows end on terminal progress and may leave DATA in flight.
+
+```go
+import (
+    "context"
+    "encoding/json"
+    "errors"
+    "io"
+    "time"
+
+    "github.com/sandover/plasmite/bindings/go/udp"
+)
+
+client, err := udp.NewClient("udp://127.0.0.1:9701")
+if err != nil {
+    panic(err)
+}
+defer client.Close()
+
+pool, err := client.OpenPool("sensors")
+if err != nil {
+    panic(err)
+}
+defer pool.Close()
+
+follow, err := pool.Follow(udp.NewFollowOptions())
+if err != nil {
+    panic(err)
+}
+defer follow.Close()
+
+if err := pool.SendJSON(map[string]any{"temperature": 23}, []string{"sensor"}); err != nil {
+    panic(err)
+}
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+for {
+    event, err := follow.Next(ctx)
+    if errors.Is(err, io.EOF) {
+        break
+    }
+    if err != nil {
+        panic(err)
+    }
+    if frame, ok := event.(*udp.Frame); ok {
+        var data map[string]any
+        if err := json.Unmarshal(frame.Message.Data, &data); err != nil {
+            panic(err)
+        }
+        _ = data["temperature"]
+        break
+    }
+}
+```
+
+`Next` returns a `*udp.Frame`, `*udp.Gap`, or `*udp.Progress` through the
+`udp.Event` interface. Frames include the original Lite3 bytes and a decoded
+`*api.Message`. Cancel the context to stop a blocked wait. A UDP follow requires
+the server's explicit `--udp-follow` setting; it never switches to HTTP.
+
 ### Concurrent use
 
 Client, Pool, Stream, and Lite3Stream methods serialize access to each native
-handle, including Close. A Tail goroutine can reopen its independent stream
-while foreground pool operations run. Handles must not be copied. Close waits
+handle, including Close. A Tail goroutine retains an independent stream while
+foreground pool operations run; closing its Pool ends the high-level tail. Handles must not be copied. Close waits
 for an active native read; set a finite stream timeout for bounded shutdown.
 Independent handles may run concurrently, and message values are owned snapshots.
+
+For playback timing, use ordinary streams and an application scheduler; see the
+[next major upgrade guide](../../docs/record/upgrading-next-major.md#sdk-applications-control-playback-timing).

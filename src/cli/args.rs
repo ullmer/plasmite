@@ -17,13 +17,13 @@ use std::path::PathBuf;
 
 COMMANDS
   Send and read
-    feed POOL [MESSAGE | --file PATH]    Append complete messages (stdin when omitted)
+    feed POOL [MESSAGE | --file PATH]    Append objects or messages (stdin when omitted)
     follow POOL [--tail N | --since TIME]
                 [--no-follow] [--replay SPEED]
                 [--tag TAG] [--where EXPR] [--one] [--timeout DURATION]
     fetch POOL SEQ                      Read one message
     tap POOL -- COMMAND...              Capture command output
-    duplex POOL [--me NAME]              Send and receive in one session
+    duplex POOL                         Send and receive in one session
 
   Manage pools
     pool create NAME... [--size SIZE]    Create local pools
@@ -66,7 +66,7 @@ Messages are JSON: `feed` appends, `follow` streams, and `fetch` reads one by se
 FIRST LOCAL WORKFLOW
   $ plasmite pool create chat
   $ plasmite follow chat                                      # Terminal 1
-  $ plasmite feed chat --data '{"from":"alice","msg":"hello"}'       # Terminal 2
+  $ plasmite feed chat '{"from":"alice","msg":"hello"}'       # Terminal 2
 
 "#,
     after_help = r#"OUTPUT
@@ -166,40 +166,33 @@ NOTES
         about = "Send a message to a pool",
         long_about = r#"Send JSON or pre-encoded Lite3 messages to a pool.
 
-Accepts local pool refs (name/path), remote shorthand refs (http(s)://host:port/<pool>),
+Accepts local pool refs (name/path), HTTP(S) refs, and udp://host:port/<pool>,
 inline JSON, file input (-f/--file), or streams via stdin (auto-detected).
 Use --input-format lite3-raw for one raw attachment from a file or stdin."#,
         after_help = r#"EXAMPLES
-  $ plasmite feed foo --data '{"hello":"world"}'             # create a message
-  $ plasmite feed foo --data --tag alert '{"msg":"check"}'  # create with a tag
+  $ plasmite feed foo '{"hello":"world"}'             # create a message
+  $ plasmite feed foo --tag alert '{"msg":"check"}'  # create with a tag
   $ plasmite follow source | plasmite feed destination       # copy messages
   $ plasmite feed foo < messages.jsonl                      # reload saved messages
 
 INPUT AND OUTPUT
-  - Complete messages contain object data and optional meta.tags; missing tags mean []
-  - Use --data to construct messages from application objects; --tag requires --data
+  - Objects are application data unless they have exactly seq, time, meta.tags, and data
+  - Complete messages preserve data and tags; source seq/time are validated and replaced
+  - --tag adds tags to application objects; complete messages supply their own tags
   - Choose one input source: MESSAGE, --file, or stdin
   - JSON, marked YAML, and framed Lite3 detect automatically and append one message at a time
   - --input-format chooses an explicit encoding; lite3-raw reads one attachment through EOF
   - Each append gets a new sequence and time and writes the complete destination message
+  - UDP sends produce no storage receipt and may be lost, duplicated, or reordered
   - Invalid input stops immediately; earlier successful appends remain stored
   - stdout holds messages; stderr holds errors and notices"#
     )]
     Feed {
-        #[arg(help = "Pool ref: local name/path or shorthand URL http(s)://host:port/<pool>")]
+        #[arg(help = "Pool name/path or http(s)://host:port/<pool> or udp://host:port/<pool>")]
         pool: String,
-        #[arg(help = "Complete message, or application object with --data")]
+        #[arg(help = "Application object or complete message")]
         data: Option<String>,
-        #[arg(
-            long = "data",
-            help = "Create messages from application objects instead of reading complete messages"
-        )]
-        contents: bool,
-        #[arg(
-            long,
-            requires = "contents",
-            help = "Tag for messages created with --data (repeatable)"
-        )]
+        #[arg(long, help = "Tag for application objects (repeatable)")]
         tag: Vec<String>,
         #[arg(
             short = 'f',
@@ -215,7 +208,7 @@ INPUT AND OUTPUT
         create: bool,
         #[arg(
             long = "create-size",
-            help = "Pool size when creating (bytes or K/M/G; requires --create)"
+            help = "Pool size when creating (bytes or K/M/G; creates if missing, leaves existing pools unchanged)"
         )]
         create_size: Option<String>,
         #[arg(long, default_value_t = 0, help = "Retry count for Busy errors")]
@@ -252,6 +245,7 @@ CONSTRAINTS
   - Request body, tail timeout, and tail concurrency limits must be positive
   - The local admin listener stays on loopback; remote clients use HTTPS
   - Installed servers start at boot
+  - --udp-follow enables unauthenticated, unencrypted UDP reads and implies UDP input
   - On Windows, install, update, and uninstall need approval from the pool-owning administrator"#
     )]
     Serve {
@@ -327,7 +321,7 @@ OUTPUT
 
 By default, `follow` waits for new messages forever (Ctrl-C to stop).
 Use `--tail N` to see recent history first, then keep following.
-Use --no-follow with --tail or --since to read finite history.
+Use --no-follow alone for all retained history, or with --tail or --since for a selection.
 Use --replay SPEED with history for local timed playback; it implies --no-follow."#,
         after_help = r#"EXAMPLES
   $ plasmite follow foo                                      # new messages
@@ -337,9 +331,13 @@ Use --replay SPEED with history for local timed playback; it implies --no-follow
   $ plasmite follow foo --tail 100 --no-follow > messages.jsonl
 
 LOCAL AND REMOTE
-  Local and remote refs support history, filters, and JSON, YAML, or framed Lite3.
-  Remote refs reject --create, --replay, --no-notify, and --quiet-drops.
-  --no-follow requires --tail or --since and stops at the starting history bound.
+  Local, HTTP(S), and UDP refs support history, filters, and JSON, YAML, or framed Lite3.
+  HTTP(S) refs reject --create, --replay, --no-notify, and --quiet-drops.
+  UDP refs reject --create, --replay, and --no-notify.
+  UDP delivers messages in arrival order, including late messages and duplicates.
+  Only explicit server skips produce UDP gap notices; sequence jumps do not prove loss.
+  Finite UDP reads end on terminal progress and may leave packets in flight.
+  --no-follow alone reads all retained history and stops at the starting history bound.
   --tail counts retained messages before filters; filters apply to history and new messages.
   Finite reads exit nonzero if retention removes selected messages.
   Live reads report dropped messages on stderr and continue."#
@@ -347,10 +345,10 @@ LOCAL AND REMOTE
     Follow {
         #[arg(
             long,
-            help = "Read selected history and exit; requires --tail or --since"
+            help = "Read all retained history and exit, or select with --tail or --since"
         )]
         no_follow: bool,
-        #[arg(help = "Pool ref: local name/path or shorthand URL http(s)://host:port/<pool>")]
+        #[arg(help = "Pool name/path or http(s)://host:port/<pool> or udp://host:port/<pool>")]
         pool: String,
         #[arg(long, help = "Create local pool if missing before following")]
         create: bool,
@@ -410,7 +408,7 @@ Use `--` to separate tap flags from the wrapped command argv."#,
   $ plasmite follow build
   $ plasmite follow build --where '.data.stream == "stderr"'
   $ plasmite tap deploy --tag prod -- ./deploy.sh
-  $ plasmite tap api --create --create-size 64M -- ./server
+  $ plasmite tap api --create-size 64M -- ./server
 
 CAPTURE AND EXIT
   - `--` is required before wrapped command args
@@ -426,7 +424,7 @@ CAPTURE AND EXIT
         create: bool,
         #[arg(
             long = "create-size",
-            help = "Pool size when creating (bytes or K/M/G; requires --create)"
+            help = "Pool size when creating (bytes or K/M/G; creates if missing, leaves existing pools unchanged)"
         )]
         create_size: Option<String>,
         #[arg(long, help = "Repeatable tag for captured line messages")]
@@ -447,36 +445,27 @@ CAPTURE AND EXIT
         arg_required_else_help = true,
         display_order = 4,
         about = "Send and follow from one command",
-        long_about = r#"Read and write a pool from one process.
+        long_about = r#"Send messages from stdin and receive complete messages on stdout.
 
-`duplex` follows a pool on stdout (like `follow`) while also sending input from stdin:
+Terminal and piped stdin accept the same JSON, marked YAML, and framed Lite3
+messages as feed. Duplex assigns no meaning to fields inside data.
 
-- TTY stdin: requires `--me`; each non-empty line appends a message with `.data = {"from": ME, "msg": LINE}`.
-  Your own messages are hidden from output unless `--echo-self` is set.
-- Non-TTY stdin: ingests stdin as a JSON stream (like `feed`, defaults: automatic input detection).
-  Duplex exits when stdin ends (EOF) or when the receive side ends (e.g. timeout/error).
-
-Notes:
-- Remote refs do not support --create. Both targets support --tail and --since."#,
+Input EOF closes sending; reception continues until cancellation, an output
+failure, or --timeout. Choose --timeout for a bounded session."#,
         after_help = r#"EXAMPLES
-  $ plasmite duplex chat --me alice
-  $ plasmite follow source | plasmite duplex destination
+  $ plasmite duplex events --create
+  $ printf '{"ping":true}\n' | plasmite duplex events --timeout 5s
 
 INPUT AND OUTPUT
-  Terminal input creates chat messages and requires --me.
-  Piped stdin accepts complete JSON, marked YAML, or framed Lite3 messages.
-  stdout streams received complete messages; stderr holds errors and notices.
-  stdin EOF ends the session; use feed to copy a finite stream and echo every appended message.
-  --echo-self includes received messages whose from field matches --me."#
+  JSON, marked YAML, and framed Lite3 use the same rules as feed.
+  stdout streams received complete messages, including your own appends.
+  Input EOF closes sending while reception continues.
+  --timeout exits 124 after a period without output.
+  HTTP(S) and UDP refs do not support --create."#
     )]
     Duplex {
-        #[arg(help = "Pool ref: local name/path or shorthand URL http(s)://host:port/<pool>")]
+        #[arg(help = "Pool name/path or http(s)://host:port/<pool> or udp://host:port/<pool>")]
         pool: String,
-        #[arg(
-            long,
-            help = "Sender identity for TTY mode and default self-suppression"
-        )]
-        me: Option<String>,
         #[arg(long, help = "Create local pool if missing before following")]
         create: bool,
         #[arg(
@@ -497,8 +486,6 @@ INPUT AND OUTPUT
             conflicts_with = "tail"
         )]
         since: Option<String>,
-        #[arg(long, help = "Also emit your own messages in the receive stream")]
-        echo_self: bool,
     },
     #[command(
         arg_required_else_help = true,
@@ -568,6 +555,12 @@ pub(crate) enum ServeSubcommand {
             help = "Remove UDP input from the installed server"
         )]
         no_udp: bool,
+        #[arg(
+            long,
+            conflicts_with = "udp_follow",
+            help = "Remove UDP reads from the installed server while retaining UDP input"
+        )]
+        no_udp_follow: bool,
     },
     #[command(about = "Start the installed background service")]
     Start {},
@@ -806,6 +799,9 @@ pub(crate) struct ServeRunArgs {
         help_heading = "Connection"
     )]
     pub(crate) udp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[arg(long = "udp-follow", action = clap::ArgAction::SetTrue, help = "Allow UDP followers (unauthenticated and unencrypted; implies UDP input)", help_heading = "Connection")]
+    pub(crate) udp_follow: Option<bool>,
     #[arg(
         long = "shared-address",
         value_name = "URL",

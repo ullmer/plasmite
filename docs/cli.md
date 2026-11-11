@@ -20,6 +20,18 @@ Commands with remote support accept `https://host:port/pool`. This shorthand
 names a pool; do not append remote API paths. The loopback-only HTTP listener
 is for credential-free use on the server machine.
 
+`feed`, `follow`, and `duplex` also accept `udp://HOST:PORT/POOL`. Give an
+explicit port and one pool name. UDP sends confirm only that the local operating
+system accepted the datagram. The
+[UDP receive policy](../spec/udp/v1/SPEC.md#receive-ordering-and-notices) requires
+follow to deliver matching messages in arrival order, including late messages
+and duplicates, and report only explicit server skips. Sequence/progress jumps
+never justify dropping a packet or inferring a gap. This source change awaits
+a major release. A finite follow ends on terminal progress and can leave DATA
+in flight. It never repairs data or switches to HTTP. The maximum datagram size
+is 65,507 bytes, including routing and application framing. Other commands
+reject UDP URLs.
+
 | Command | Local name/path | Remote URL |
 | --- | --- | --- |
 | `pool create/delete` | yes | no |
@@ -45,11 +57,13 @@ bind interface. The local administration listener stays on loopback.
 For small messages whose senders accept possible loss, `--udp` adds an
 append-only UDP listener alongside HTTP and HTTPS. It binds to
 `127.0.0.1:9701` by default; use `--udp=IP:PORT` to choose another address.
-The listener can append to every pool in the selected directory. A non-loopback
-address grants unauthenticated append access to that directory to reachable
-senders, so bind it only on a network whose rules limit access. See
-[UDP input](record/serving.md#send-udp-messages) for its message format and
-delivery limits.
+`--udp-follow` enables both input and follow at that address. Existing `--udp`
+settings keep input only until you opt into reads. Both capabilities apply to
+all pools in the selected directory. A reachable sender can append without
+credentials; with follow enabled it can also read those pools. Bind only on a
+network whose rules limit access. See
+[UDP messages](record/serving.md#send-udp-messages) for the access and delivery
+contract.
 
 The older `--shared-address SERVER` form still names the public origin but
 keeps the 1.0 listener default of `0.0.0.0:9743`. Use `--remote-bind` to
@@ -102,7 +116,9 @@ options, `install` keeps the saved settings, installs the current Plasmite
 executable, and starts the service. Updates retain the installed listener
 addresses unless `--remote-bind` changes them. UDP settings also persist across
 updates and restarts. Use `serve install --no-udp` to remove the saved UDP
-listener; leaving `--udp` off an update keeps its current setting.
+listener and follow capability; leaving UDP options off an update keeps the
+saved settings. `serve install --udp-follow` enables reads;
+`serve install --no-udp-follow` removes reads and keeps input.
 
 ## Server status
 
@@ -192,20 +208,32 @@ without retrying that append.
 
 ## Creating messages
 
-Use `--data` to create messages from application objects. This gives ordinary
-fields such as `data`, `seq`, and `meta` their application meaning.
+Ordinary JSON or YAML objects are application data; no flag is needed:
 
 ```bash
-plasmite feed events --data '{"temperature":21}'
-plasmite feed events --data --tag sensor '{"temperature":21}'
-jq -c '.[]' readings.json | plasmite feed events --data
+plasmite feed events '{"temperature":21}'
+plasmite feed events --tag sensor '{"temperature":21}'
+jq -c '.[]' readings.json | plasmite feed events
 ```
 
 Choose one source: a positional argument, `--file PATH`, or stdin.
-`--file -` reads stdin. All sources follow the same message rule. `--tag`
-requires `--data`; copied messages supply their own tags. Missing `meta` or
-`meta.tags` means an empty tag list. Default message input rejects unknown
-message and metadata fields, invalid tags, and non-object contents.
+`--file -` reads stdin. All sources follow the same message rule. Only objects
+with exactly `seq`, `time`, `meta`, and `data`, where `meta` has exactly `tags`,
+are recognized as complete messages. That shape is reserved, even when intended
+as application data. Source `seq` must be an unsigned integer, `time` an RFC 3339
+string, `meta.tags` a list of strings, and `data` an object. Invalid reserved
+messages fail. Partial envelopes, extra fields, and a field named `data` alone
+remain application data.
+
+`--tag` adds tags to application objects; complete messages supply their own
+tags and reject `--tag`. Non-object application data is rejected. `--data` has
+been removed; delete it from existing commands. There is no override for the
+reserved message shape.
+
+
+For local `feed` and `tap`, `--create-size SIZE` creates a missing pool without
+requiring `--create`. Existing pools are opened unchanged; the option never resizes
+or recreates them. Without either creation option, a missing pool remains an error.
 
 ## Formats
 
@@ -253,9 +281,11 @@ succeed without appending anything.
 Reports use the same JSON/YAML formatting rule but remain reports.
 Binary formats require message commands; raw output requires `fetch`.
 Help and completion remain text. `tap` passes through its child's output;
-`mcp` keeps JSON-RPC. Terminal `duplex` creates chat messages with `--me`;
-piped `duplex` accepts complete messages, streams received messages, and
-ends when stdin closes. Use `feed` when every input needs an echoed append.
+`mcp` keeps JSON-RPC. `duplex` accepts the same messages as `feed` on terminal
+and piped stdin and streams received complete messages, including its own appends.
+Input EOF closes sending while reception continues. Choose `--timeout` for a
+bounded receive session; use `feed` for finite copying. See the
+[next major upgrade guide](record/upgrading-next-major.md) for migration.
 
 Bash and Zsh preserve binary pipes. PowerShell 7.4 and later preserves
 native binary redirection; earlier versions need `cmd.exe` redirection.
@@ -266,10 +296,15 @@ native binary redirection; earlier versions need `cmd.exe` redirection.
 messages, and `--since TIME` adds messages since an RFC 3339 or relative time
 such as `5m`. Local and remote reads follow these same rules.
 
-Use `--no-follow` with either selector to read history and exit:
+UDP uses the same history selection and filters with its separate
+[arrival-order delivery policy](../spec/udp/v1/SPEC.md#receive-ordering-and-notices).
+Its finite completion gives no assurance that every selected message arrived.
+
+Use `--no-follow` alone to read all currently retained history and exit, or add
+`--tail` or `--since` to select a smaller history:
 
 ```console
-plasmite follow events --tail 100 --no-follow
+plasmite follow events --no-follow
 plasmite follow https://pools.example.net:9743/events --since 5m --no-follow --format json
 ```
 

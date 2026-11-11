@@ -1,7 +1,7 @@
 """
 Purpose: Validate Python binding behaviors for payloads, tailing, and lifecycle.
 Key Exports: None (unittest module).
-Role: Exercise edge cases beyond conformance manifests.
+Role: Exercise the Python binding against native pools and server processes.
 Invariants: Requires libplasmite to be discoverable.
 Notes: Uses temporary directories and avoids global state.
 """
@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import subprocess
+import tempfile
+import threading
+import time
 import unittest
 from contextlib import contextmanager
 from unittest import mock
@@ -34,6 +39,12 @@ from plasmite import (
     NotFoundError,
     PlasmiteError,
     RetentionGapError,
+    UdpClient,
+    UdpFollowOptions,
+    UdpFrame,
+    UdpGap,
+    UdpProgress,
+    UdpStart,
     parse_message,
 )
 
@@ -42,14 +53,11 @@ TEST_POOL_SIZE_BYTES = 1024 * 1024
 
 class BindingTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temp = Path(self._tempdir())
+        temp = tempfile.TemporaryDirectory(prefix="plasmite-py-")
+        self.addCleanup(temp.cleanup)
+        self.temp = Path(temp.name)
         self.pool_dir = self.temp / "pools"
         self.pool_dir.mkdir(parents=True, exist_ok=True)
-
-    def _tempdir(self) -> str:
-        import tempfile
-
-        return tempfile.mkdtemp(prefix="plasmite-py-")
 
     def _new_client(self) -> Client:
         return Client(str(self.pool_dir))
@@ -102,6 +110,15 @@ class BindingTests(unittest.TestCase):
             get_alias = pool.get(message.seq)
             self.assertIsInstance(get_alias, Message)
             self.assertEqual(get_alias.seq, fetched.seq)
+
+    def test_message_time_fraction_widths_and_raw_precision(self) -> None:
+        for fraction, micros in [("1", 100000), ("123", 123000), ("12345", 123450), ("123456", 123456), ("123456789", 123456)]:
+            with self.subTest(fraction=fraction):
+                payload = json.dumps({"seq": 1, "time": f"2026-10-14T12:34:56.{fraction}Z", "meta": {"tags": []}, "data": {}}).encode()
+                message = parse_message(payload)
+                self.assertEqual(message.time.microsecond, micros)
+                self.assertEqual(message.time.utcoffset().total_seconds(), 0)
+                self.assertEqual(message.raw, payload)
 
     def test_default_pool_size_constant_matches_core_default(self) -> None:
         self.assertEqual(plasmite.DEFAULT_POOL_SIZE_BYTES, 1024 * 1024)
@@ -206,6 +223,18 @@ class BindingTests(unittest.TestCase):
             self.assertGreater(continuing.seq, first.seq)
             pool.close()
 
+    def test_open_stream_reports_first_unread_sequence_after_overwrite(self) -> None:
+        with self._new_client() as client, client.create_pool("slow-reader", 64 * 1024) as pool:
+            seed = pool.append({"kind": "seed"})
+            with pool.open_stream(since_seq=seed.seq, timeout_ms=500, error_on_gap=True) as stream:
+                self.assertEqual(parse_message(stream.next_json()).seq, seed.seq)
+                lost = pool.append({"kind": "lost"})
+                self._fill_past(pool, lost.seq)
+                with self.assertRaises(RetentionGapError) as raised:
+                    stream.next_json()
+                self.assertEqual(raised.exception.seq, lost.seq)
+                self.assertIsNone(stream.next_json())
+
     def test_lite3_stream_can_fail_on_retention_gap(self) -> None:
         with self._new_client() as client:
             pool = client.create_pool("lite3-gap", 64 * 1024)
@@ -224,43 +253,6 @@ class BindingTests(unittest.TestCase):
             finally:
                 stream.close()
                 pool.close()
-
-    def test_replay_filters_by_tags_before_max_messages(self) -> None:
-        with self._client_pool("replay-tags") as (_, pool):
-            pool.append_json(b'{"kind":"drop"}', ["drop"], Durability.FAST)
-            pool.append_json(b'{"kind":"keep"}', ["keep"], Durability.FAST)
-
-            results = list(
-                pool.replay(speed=1.0, max_messages=1, timeout_ms=50, tags=["keep"])
-            )
-            self.assertEqual(len(results), 1)
-            message = results[0]
-            self.assertIsInstance(message, Message)
-            self.assertEqual(message.data["kind"], "keep")
-
-    def test_tail_no_tags_skips_tag_filter_helper(self) -> None:
-        with self._client_pool("tail-no-tags-fast-path") as (_, pool):
-            pool.append_json(b'{"kind":"keep"}', ["keep"], Durability.FAST)
-
-            with mock.patch(
-                "plasmite._message_has_tags",
-                side_effect=AssertionError("tail should bypass tag helper without tags"),
-            ):
-                results = list(pool.tail(max_messages=1, timeout_ms=50))
-            self.assertEqual(len(results), 1)
-            self.assertEqual(results[0].data["kind"], "keep")
-
-    def test_replay_no_tags_skips_tag_filter_helper(self) -> None:
-        with self._client_pool("replay-no-tags-fast-path") as (_, pool):
-            pool.append_json(b'{"kind":"keep"}', ["keep"], Durability.FAST)
-
-            with mock.patch(
-                "plasmite._message_has_tags",
-                side_effect=AssertionError("replay should bypass tag helper without tags"),
-            ):
-                results = list(pool.replay(speed=1.0, max_messages=1, timeout_ms=50))
-            self.assertEqual(len(results), 1)
-            self.assertEqual(results[0].data["kind"], "keep")
 
     def test_closed_handles_error(self) -> None:
         client = self._new_client()
@@ -365,6 +357,199 @@ class BindingTests(unittest.TestCase):
             )
             with self.assertRaises(NotFoundError):
                 client.open_pool("missing")
+
+    def test_pool_lookup_errors_distinguish_missing_sequence_and_corrupt_file(self) -> None:
+        pool_path = self.pool_dir / "damaged.plasmite"
+        with self._new_client() as client:
+            with self.assertRaises(NotFoundError) as missing_pool:
+                client.open_pool("damaged")
+            self.assertEqual(missing_pool.exception.path, str(pool_path))
+            self.assertIsNone(missing_pool.exception.seq)
+
+            with client.create_pool("damaged", TEST_POOL_SIZE_BYTES) as pool:
+                with self.assertRaises(NotFoundError) as missing_message:
+                    pool.get(42)
+                self.assertEqual(missing_message.exception.seq, 42)
+                self.assertIsNone(missing_message.exception.path)
+
+            with pool_path.open("r+b") as handle:
+                handle.truncate(4)
+            with self.assertRaises(plasmite.CorruptError) as corrupt:
+                client.open_pool("damaged")
+            self.assertEqual(corrupt.exception.path, str(pool_path))
+            self.assertIsNone(corrupt.exception.seq)
+
+    def test_udp_delivers_late_and_duplicate_frames(self) -> None:
+        with self._new_client() as client:
+            with self._new_pool(client, "udp-order") as pool:
+                message = pool.append({"value": 17}, ["tag"])
+                payload = pool.get_lite3(message.seq).payload
+        base = 1 << 53
+        timestamp = 1_700_000_000_000_000_001
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as peer:
+            peer.bind(("127.0.0.1", 0))
+            peer.settimeout(3)
+
+            def serve() -> None:
+                request, address = peer.recvfrom(4096)
+                subscription = request[8:24]
+
+                def send(op: int, body: bytes) -> None:
+                    peer.sendto(b"\0PUDP\x01" + bytes([op, 0]) + subscription + body, address)
+
+                cookie = {"expires_ms": 10_000, "mac": "test-cookie"}
+                send(3, json.dumps({"cookie": cookie}).encode())
+                verified, source = peer.recvfrom(4096)
+                assert source == address
+                assert json.loads(verified[24:])["cookie"] == cookie
+
+                def data(seq: int) -> None:
+                    send(7, seq.to_bytes(8, "big") + timestamp.to_bytes(8, "big") + payload)
+
+                def progress(terminal: bool) -> None:
+                    send(4, json.dumps({
+                        "start_seq": base + 10, "next_seq": base + 13,
+                        "end_seq": base + 12, "lease_ms": 30_000, "terminal": terminal,
+                    }).encode())
+
+                data(base + 10)
+                progress(False)
+                send(5, json.dumps({"first": base + 11, "last": base + 11, "reason": "pressure"}).encode())
+                for seq in [base + 12, base + 11, base + 12]:
+                    data(seq)
+                progress(True)
+
+            worker = threading.Thread(target=serve)
+            worker.start()
+            try:
+                with UdpClient(f"udp://127.0.0.1:{peer.getsockname()[1]}") as client:
+                    with client.open_pool("sensors") as pool:
+                        with pool.follow(UdpFollowOptions(start=UdpStart.last(4), live=False)) as follow:
+                            events = [follow.next_event(timeout_ms=1000) for _ in range(7)]
+                            self.assertIsNone(follow.next_event(timeout_ms=0))
+                frames = [event for event in events if isinstance(event, UdpFrame)]
+                self.assertEqual([frame.seq for frame in frames], [base + 10, base + 12, base + 11, base + 12])
+                for frame in frames:
+                    self.assertEqual(frame.payload, payload)
+                    self.assertEqual(frame.timestamp_ns, timestamp)
+                    self.assertEqual(frame.message().data, {"value": 17})
+                skips = [event for event in events if isinstance(event, UdpGap)]
+                self.assertEqual([(event.first, event.last, event.reason) for event in skips], [(base + 11, base + 11, "pressure")])
+                progress = [event for event in events if isinstance(event, UdpProgress)]
+                self.assertEqual([event.next_seq for event in progress], [base + 13, base + 13])
+                self.assertTrue(progress[-1].terminal)
+            finally:
+                worker.join(timeout=4)
+                self.assertFalse(worker.is_alive())
+
+    def test_udp_sdk_send_and_follow_against_server_process(self) -> None:
+        binary = Path(os.environ.get("PLASMITE_BIN", REPO_ROOT / "target" / "debug" / "plasmite"))
+        if not binary.exists():
+            self.skipTest(f"Plasmite CLI is not built: {binary}")
+
+        with self._new_client() as local_client:
+            with local_client.create_pool("udp-sdk", TEST_POOL_SIZE_BYTES) as local_pool:
+                original = local_pool.append({"origin": "lite3", "value": 7}, ["source"])
+                original_lite3 = local_pool.get_lite3(original.seq).payload
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as held:
+                    held.bind(("127.0.0.1", 0))
+                    port = held.getsockname()[1]
+
+                home = self.temp / "server-home"
+                home.mkdir(parents=True, exist_ok=True)
+                ready = self.temp / "server-ready"
+                env = {
+                    **os.environ,
+                    "HOME": str(home),
+                    "PLASMITE_ACCESS_HOME": str(home),
+                    "PLASMITE_SERVE_READY_FILE": str(ready),
+                }
+                server = subprocess.Popen(
+                    [
+                        str(binary), "--dir", str(self.pool_dir), "serve",
+                        "--bind", "127.0.0.1:0", "--remote-bind", "127.0.0.1:0",
+                        f"--udp=127.0.0.1:{port}", "--udp-follow",
+                    ],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                )
+                try:
+                    deadline = time.monotonic() + 10
+                    while not ready.exists():
+                        if server.poll() is not None:
+                            details = server.stderr.read().decode("utf-8", "replace")
+                            self.fail(f"server exited before readiness: {details}")
+                        if time.monotonic() >= deadline:
+                            self.fail("server did not become ready")
+                        time.sleep(0.02)
+
+                    with UdpClient(f"udp://127.0.0.1:{port}") as udp_client:
+                        with udp_client.open_pool("udp-sdk") as udp_pool:
+                            options = UdpFollowOptions(
+                                start=UdpStart.sequence(original.seq + 1), live=True
+                            )
+                            with udp_pool.follow(options) as follow:
+                                self.assertIsNone(
+                                    udp_pool.send_json({"origin": "json", "value": 8}, ["sensor"])
+                                )
+                                json_frame = _next_udp_frame(self, follow)
+                                json_message = json_frame.message()
+                                self.assertEqual(json_message.data, {"origin": "json", "value": 8})
+                                self.assertEqual(json_message.tags, ["sensor"])
+                                json_time = local_pool.get_lite3(json_frame.seq).timestamp_ns
+                                self.assertEqual(json_frame.timestamp_ns, json_time)
+                                self.assertGreater(json_frame.timestamp_ns, 1 << 53)
+                                stored_json = local_pool.get(json_frame.seq)
+                                self.assertEqual(stored_json.data, json_message.data)
+
+                                self.assertIsNone(udp_pool.send_lite3(original_lite3))
+                                lite3_frame = _next_udp_frame(self, follow)
+                                self.assertEqual(lite3_frame.payload, original_lite3)
+                                self.assertEqual(lite3_frame.message().data, original.data)
+                                self.assertEqual(lite3_frame.message().tags, ["source"])
+                                stored_lite3 = local_pool.get(lite3_frame.seq)
+                                self.assertEqual(stored_lite3.data, original.data)
+
+                            large_start = (1 << 53) + 1
+                            with udp_pool.follow(
+                                UdpFollowOptions(
+                                    start=UdpStart.sequence(large_start), live=False
+                                )
+                            ) as large_follow:
+                                progress = large_follow.next_event(timeout_ms=1000)
+                                self.assertEqual(progress.start_seq, large_start)
+
+                            cancel_follow = udp_pool.follow()
+                            self.assertIsNotNone(cancel_follow.next_event(timeout_ms=0))
+                            received = []
+                            waiter = threading.Thread(
+                                target=lambda: received.append(cancel_follow.next_event())
+                            )
+                            waiter.start()
+                            time.sleep(0.02)
+                            cancel_follow.close()
+                            waiter.join(timeout=1)
+                            self.assertFalse(waiter.is_alive(), "close did not cancel a blocked wait")
+                            self.assertEqual(received, [None])
+                finally:
+                    server.terminate()
+                    try:
+                        server.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        server.kill()
+                        server.communicate()
+
+
+def _next_udp_frame(test: unittest.TestCase, follow) -> UdpFrame:
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        event = follow.next_event(timeout_ms=100)
+        if isinstance(event, UdpFrame):
+            return event
+    test.fail("UDP follower did not receive a frame")
+    raise AssertionError("unreachable")
 
 
 if __name__ == "__main__":

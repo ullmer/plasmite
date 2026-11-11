@@ -40,7 +40,6 @@ pub(super) fn dispatch(command: Command, context: CliContext) -> Result<CommandR
             pool,
             tag,
             data,
-            contents,
             file,
             durability,
             create,
@@ -54,7 +53,6 @@ pub(super) fn dispatch(command: Command, context: CliContext) -> Result<CommandR
                 pool,
                 tags: tag,
                 data,
-                contents,
                 file,
                 durability,
                 create,
@@ -99,22 +97,18 @@ pub(super) fn dispatch(command: Command, context: CliContext) -> Result<CommandR
         ),
         Command::Duplex {
             pool,
-            me,
             create,
             tail,
             timeout,
             since,
-            echo_self,
             ..
         } => stream::duplex(
             stream::DuplexArgs {
                 pool,
-                me,
                 create,
                 tail,
                 timeout,
                 since,
-                echo_self,
             },
             &context,
         ),

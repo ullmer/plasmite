@@ -53,6 +53,57 @@ try {
 }
 ```
 
+### UDP sender and follower
+
+UDP uses one explicit endpoint. The server must enable `--udp-follow`, which
+allows unauthenticated, unencrypted reads on that socket. A send call reports
+local validation or operating-system errors; it never returns a storage
+receipt.
+
+The [UDP receive policy](../../spec/udp/v1/SPEC.md#receive-ordering-and-notices)
+requires arrival-order delivery, including late messages and duplicates. Only
+explicit server skips produce gap events; sequence/progress jumps never suppress
+frames or establish loss. This source change awaits a major release. Finite
+follows end on terminal
+progress and may leave DATA in flight.
+
+```js
+const { UdpClient, UdpStart } = require("plasmite");
+
+(async () => {
+  const client = new UdpClient("udp://127.0.0.1:9701");
+  const pool = client.openPool("sensors");
+  const follow = await pool.follow({ start: UdpStart.new(), live: true });
+
+  try {
+    pool.sendJson({ temperature: 23 }, ["sensor"]);
+    for await (const event of follow) {
+      if (event.kind === "frame") {
+        console.log(event.seq, event.message.data);
+        break;
+      }
+    }
+  } finally {
+    follow.close();
+    pool.close();
+    client.close();
+  }
+})().catch(console.error);
+```
+
+Use `UdpStart.last(count)`, `UdpStart.since(timestampNs)`, or
+`UdpStart.sequence(seq)` to select retained history. Sequence and timestamp
+metadata use `bigint`. Pass `bigint` for start values above JavaScript's safe
+integer range; the SDK rejects unsafe `number` values instead of rounding them.
+`follow()` returns a promise while the server confirms the initial subscription.
+Closing its pool during that handshake does not cancel the opening call; the
+call keeps its native handle until it succeeds or reaches the five-second
+startup deadline. Once open, call `follow.close()` to close the subscription.
+Await `nextEvent(timeoutMs)`; it returns `null` when the wait expires. Pass an
+`AbortSignal` as the second argument to stop one pending wait. The async
+iterator keeps waiting until a finite follow ends and accepts the same signal
+in its options.
+
 ## Troubleshooting
 
 - **Missing pool directory**: pool creation creates parent directories automatically. If you call `openPool(...)` on a missing pool, catch `ErrorKind.NotFound` or use `client.pool(...)` to create-or-open.
@@ -112,7 +163,6 @@ const { RemoteClient } = require("plasmite");
 | | `.close()` | Release resources |
 | | `[Symbol.dispose]()` | Alias for `.close()` (used by explicit resource-management syntax when enabled) |
 | `Module` | `.parseMessage(value)` | Normalize a raw envelope or `Message` into a typed `Message` |
-| | `.replay(pool, opts?)` | Backward-compatible replay wrapper (delegates to `pool.replay`) |
 | `Pool` | `.appendJson(payload, tags, durability)` | Append JSON payload (Buffer or JSON-serializable value); returns message envelope as `Buffer` |
 | | `.append(data, tags?, durability?)` | Append any JSON-serializable value; returns typed `Message` |
 | | `.appendLite3(buf, durability?)` | Append raw bytes (lite3 framing); returns sequence `bigint` |
@@ -120,7 +170,6 @@ const { RemoteClient } = require("plasmite");
 | | `.getJson(seq)` | Get message by sequence number; returns `Buffer` |
 | | `.getLite3(seq)` | Get lite3 frame by sequence number |
 | | `.tail(opts?)` | Async generator of typed `Message` values with optional tag filter |
-| | `.replay(opts?)` | Async generator of typed `Message` values with speed/timing controls |
 | | `.openStream(sinceSeq?, max?, timeoutMs?, errorOnGap?)` | Open a message stream |
 | | `.openLite3Stream(sinceSeq?, max?, timeoutMs?, errorOnGap?)` | Open a lite3 frame stream |
 | | `.close()` | Close the pool |
@@ -133,6 +182,14 @@ const { RemoteClient } = require("plasmite");
 | | `[Symbol.iterator]()` | Iterate synchronously via `for...of` |
 | | `.close()` | Close the stream |
 | | `[Symbol.dispose]()` | Alias for `.close()` |
+| `UdpClient(endpoint)` | | Open one explicit UDP server endpoint |
+| | `.openPool(name)` | Open a named pool handle |
+| `UdpPool` | `.sendJson(data, tags?)` | Send a JSON-origin message without a storage receipt |
+| | `.sendLite3(buf)` | Send a complete Lite3 document |
+| | `.follow(opts?)` | Open a best-effort UDP event stream (`Promise<UdpFollow>`) |
+| `UdpFollow` | `.nextEvent(timeoutMs?)` | Read one frame, gap, or progress event; return `null` at timeout or end |
+| | `[Symbol.asyncIterator]()` | Iterate events asynchronously |
+| | `.close()` | Cancel a wait and close the subscription |
 
 **Durability** controls fsync behavior:
 - `Durability.Fast` — buffered writes (higher throughput)
@@ -187,9 +244,14 @@ const options = {
 };
 ```
 
-Local `tail()` reopens timed streams while following; `timeoutMs` controls
-its polling interval, not a total deadline. Use `maxMessages` to stop after
-a chosen number of matching messages. Remote `tail()` makes one request and
+Local `tail()` retains one native reader and waits on worker threads, so timers
+and other JavaScript work keep running. `timeoutMs` controls each wait, not a
+total deadline. With `maxMessages`, a quiet wait also ends the tail. Pass
+`signal: controller.signal` to cancel a quiet tail through an `AbortController`.
+Matching-message limits apply after tag filtering. Low-level streams offer
+`nextJsonWait(timeoutMs)` or `nextWait(timeoutMs)` with statuses 0 (wait expired),
+1 (message/frame), 2 (finished), and 3 (cancelled). Their `cancel()` and `close()`
+methods interrupt active waits; worker handles stay alive until the calls finish. Remote `tail()` makes one request and
 ends when that server stream closes or times out. Breaking out of either async iterator closes its stream.
 
 Remote JSON tails surface a fail-closed gap as `RemoteError` with
@@ -237,17 +299,7 @@ import { Client, Durability, Pool, RemoteClient } from "plasmite";
 For repo development, `npm test` runs:
 - native rebuild
 - `npm run check:type-surface` (runtime export ↔ `types.d.ts` drift check)
-- `node --test test/*.test.js` (includes conformance tests)
-
-Run the conformance runner directly:
-
-```bash
-cd bindings/node
-npm run build
-PLASMITE_LIB_DIR="$(pwd)/../../target/debug" \
-PLASMITE_BIN="$(pwd)/../../target/debug/plasmite" \
-node cmd/plasmite-conformance.js ../../conformance/sample-v0.json
-```
+- `node --test test/*.test.js` (binding tests)
 
 ## Platform support
 
@@ -270,3 +322,6 @@ and remote-access changes.
 ## License
 
 MIT
+
+For playback timing, use the asynchronous tail and an application scheduler; see the
+[next major upgrade guide](../../docs/record/upgrading-next-major.md#sdk-applications-control-playback-timing).

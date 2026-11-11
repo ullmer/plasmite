@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fs2::FileExt;
 use libc::{EACCES, EPERM};
 use memmap2::MmapMut;
 
@@ -177,7 +176,10 @@ impl PoolHeader {
         {
             return Err(Error::new(ErrorKind::Corrupt).with_message("header offset out of range"));
         }
-        if self.head_off % 8 != 0 || self.tail_off % 8 != 0 || self.tail_next_off % 8 != 0 {
+        if !self.head_off.is_multiple_of(8)
+            || !self.tail_off.is_multiple_of(8)
+            || !self.tail_next_off.is_multiple_of(8)
+        {
             return Err(Error::new(ErrorKind::Corrupt).with_message("header offset not aligned"));
         }
         // Empty pool is indicated by oldest_seq == 0. newest_seq is monotonic and may be non-zero
@@ -356,10 +358,10 @@ impl SeqOffsetCache {
             return;
         }
 
-        if self.entries.len() == self.max_entries {
-            if let Some(evict) = self.order.pop_back() {
-                self.entries.remove(&evict);
-            }
+        if self.entries.len() == self.max_entries
+            && let Some(evict) = self.order.pop_back()
+        {
+            self.entries.remove(&evict);
         }
 
         self.entries.insert(seq, offset);
@@ -433,6 +435,20 @@ pub struct Pool {
     mmap: MmapMut,
     header: PoolHeader,
     snapshot_lock: Mutex<()>,
+}
+
+/// Keep an opened file's identity after releasing its pool mapping.
+/// Holding the original file prevents native file-ID reuse while this guard lives.
+pub struct PoolPathGuard {
+    path: PathBuf,
+    file: File,
+}
+
+impl PoolPathGuard {
+    /// Fail if the path no longer names the original opened pool file.
+    pub fn check_current_path(&self) -> Result<(), Error> {
+        require_current_path(&self.file, &self.path)
+    }
 }
 
 impl Pool {
@@ -543,7 +559,7 @@ impl Pool {
         let actual_size = metadata.len();
 
         validate_mapped_size(actual_size).map_err(|err| err.with_path(&path))?;
-        FileExt::lock_shared(&file).map_err(|err| {
+        file.lock_shared().map_err(|err| {
             Error::new(lock_error_kind(&err))
                 .with_path(&path)
                 .with_source(err)
@@ -557,7 +573,7 @@ impl Pool {
             };
             Ok::<_, Error>((header, mmap))
         })();
-        let unlock = FileExt::unlock(&file).map_err(|err| {
+        let unlock = file.unlock().map_err(|err| {
             Error::new(lock_error_kind(&err))
                 .with_path(&path)
                 .with_source(err)
@@ -620,7 +636,7 @@ impl Pool {
         let snapshot = self.snapshot_lock.lock().map_err(|_| {
             Error::new(ErrorKind::Internal).with_message("pool snapshot lock is unavailable")
         })?;
-        FileExt::lock_shared(&self.file).map_err(|err| {
+        self.file.lock_shared().map_err(|err| {
             Error::new(lock_error_kind(&err))
                 .with_path(&self.path)
                 .with_source(err)
@@ -629,6 +645,19 @@ impl Pool {
             file: &self.file,
             _snapshot: snapshot,
         })
+    }
+
+    /// Fail if the path no longer names this opened pool instance.
+    pub fn check_current_path(&self) -> Result<(), Error> {
+        require_current_path(&self.file, &self.path)
+    }
+
+    /// Release the mapping and keep only the file and path for identity checks.
+    pub fn into_path_guard(self) -> PoolPathGuard {
+        PoolPathGuard {
+            path: self.path,
+            file: self.file,
+        }
     }
 
     pub fn bounds(&self) -> Result<Bounds, Error> {
@@ -653,32 +682,14 @@ impl Pool {
     }
 
     pub fn get(&self, seq: u64) -> Result<crate::core::cursor::FrameRef, Error> {
-        let _lock = self.read_lock()?;
-        let header = self.header_locked()?;
-        let bounds = bounds_from_header(header);
-        let (oldest, newest) = match (bounds.oldest_seq, bounds.newest_seq) {
-            (Some(oldest), Some(newest)) => (oldest, newest),
-            _ => {
-                return Err(Error::new(ErrorKind::NotFound)
-                    .with_message("message not found")
-                    .with_seq(seq));
-            }
-        };
-
-        if seq < oldest || seq > newest {
-            return Err(Error::new(ErrorKind::NotFound)
-                .with_message("message not found")
-                .with_seq(seq));
-        }
-
-        if let Some(frame) = self.get_via_index(header, seq) {
-            return Ok(frame);
-        }
-
-        self.get_by_scan(seq, header, None)
+        self.lookup(seq, None)
     }
 
-    fn get_via_index(&self, header: PoolHeader, seq: u64) -> Option<crate::core::cursor::FrameRef> {
+    fn get_via_index(
+        &self,
+        header: PoolHeader,
+        seq: u64,
+    ) -> Option<(usize, crate::core::cursor::FrameRef)> {
         let index_capacity = header.index_capacity as u64;
         if index_capacity == 0 {
             return None;
@@ -707,7 +718,7 @@ impl Pool {
             stored_offset as usize,
         ) {
             Ok(crate::core::cursor::ReadResult::Message { frame, .. }) if frame.seq == seq => {
-                Some(frame.into_owned())
+                Some((stored_offset as usize, frame.into_owned()))
             }
             _ => None,
         }
@@ -719,6 +730,14 @@ impl Pool {
         &self,
         seq: u64,
         cache: &mut SeqOffsetCache,
+    ) -> Result<crate::core::cursor::FrameRef, Error> {
+        self.lookup(seq, Some(cache))
+    }
+
+    fn lookup(
+        &self,
+        seq: u64,
+        mut cache: Option<&mut SeqOffsetCache>,
     ) -> Result<crate::core::cursor::FrameRef, Error> {
         let _lock = self.read_lock()?;
         let header = self.header_locked()?;
@@ -741,18 +760,27 @@ impl Pool {
         let ring_offset = header.ring_offset as usize;
         let ring_size = header.ring_size as usize;
 
-        if let Some(offset) = cache.get(seq) {
+        if let Some(cache) = cache.as_deref_mut()
+            && let Some(offset) = cache.get(seq)
+        {
             let cached =
                 crate::core::cursor::read_frame_at(self.mmap(), ring_offset, ring_size, offset);
-            if let Ok(crate::core::cursor::ReadResult::Message { frame, .. }) = cached {
-                if frame.seq == seq {
-                    return Ok(frame.into_owned());
-                }
+            if let Ok(crate::core::cursor::ReadResult::Message { frame, .. }) = cached
+                && frame.seq == seq
+            {
+                return Ok(frame.into_owned());
             }
             cache.remove(seq);
         }
 
-        self.get_by_scan(seq, header, Some(cache))
+        if let Some((offset, frame)) = self.get_via_index(header, seq) {
+            if let Some(cache) = cache {
+                cache.insert(seq, offset);
+            }
+            return Ok(frame);
+        }
+
+        self.get_by_scan(seq, header, cache)
     }
 
     // The caller holds the shared lock. Skipped payloads remain private borrowed
@@ -964,11 +992,10 @@ impl Pool {
 
         let used_bytes = used_ring_bytes(header);
         let free_bytes = header.ring_size.saturating_sub(used_bytes);
-        let used_percent_hundredths = if header.ring_size == 0 {
-            0
-        } else {
-            used_bytes.saturating_mul(10_000) / header.ring_size
-        };
+        let used_percent_hundredths = used_bytes
+            .saturating_mul(10_000)
+            .checked_div(header.ring_size)
+            .unwrap_or(0);
 
         let (oldest_timestamp_ns, newest_timestamp_ns) = self.boundary_timestamps(bounds);
         let now_ns = unix_now_ns();
@@ -1022,13 +1049,13 @@ pub(crate) struct ReadLock<'a> {
 
 impl Drop for ReadLock<'_> {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(self.file);
+        let _ = self.file.unlock();
     }
 }
 
 impl Drop for AppendLock {
     fn drop(&mut self) {
-        let _ = FileExt::unlock(&self.file);
+        let _ = self.file.unlock();
     }
 }
 
@@ -1104,7 +1131,7 @@ fn require_identity_matches(same: bool, path: &Path) -> Result<(), Error> {
 }
 
 fn lock_for_append(file: File, path: &Path) -> Result<AppendLock, Error> {
-    file.lock_exclusive().map_err(|err| {
+    file.lock().map_err(|err| {
         Error::new(lock_error_kind(&err))
             .with_path(path)
             .with_source(err)
@@ -2372,6 +2399,32 @@ mod tests {
     }
 
     #[test]
+    fn cold_or_invalid_caller_cache_uses_index_without_scanning_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut pool =
+            Pool::create(dir.path().join("indexed.plasmite"), PoolOptions::new(65536)).unwrap();
+        pool.append(b"first").unwrap();
+        pool.append(b"target").unwrap();
+        let header = pool.header_from_mmap().unwrap();
+        // Damage an earlier frame so a scan would fail before reaching seq 2.
+        // A valid direct lookup must remain independent of skipped history.
+        let start = header.ring_offset as usize + header.tail_off as usize;
+        pool.mmap[start..start + 4].copy_from_slice(b"NOPE");
+        for stale in [None, Some(usize::MAX), Some(header.tail_off as usize)] {
+            let mut cache = SeqOffsetCache::new(4);
+            if let Some(offset) = stale {
+                cache.insert(2, offset);
+            }
+            let frame = pool.get_with_cache(2, &mut cache).unwrap();
+            assert_eq!(frame.payload, b"target");
+            assert_eq!(cache.len(), 1, "index hit caches only the target");
+            let offset = cache.get(2).unwrap();
+            assert_ne!(offset, header.tail_off as usize);
+            assert_eq!(pool.get_with_cache(2, &mut cache).unwrap(), frame);
+        }
+    }
+
+    #[test]
     fn get_with_cache_ignores_out_of_bounds_caller_offset() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("pool.plasmite");
@@ -3054,6 +3107,26 @@ mod tests {
         let reopened = Pool::open(&path).expect("pool remains reopenable");
         let header = reopened.header_from_mmap().expect("header");
         crate::core::validate::validate_pool_state(header, &reopened.mmap).expect("valid state");
+    }
+
+    #[test]
+    fn path_guard_keeps_original_identity_after_releasing_pool() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pool.plasmite");
+        let pool = Pool::create(&path, PoolOptions::new(1024 * 1024)).unwrap();
+        let guard = pool.into_path_guard();
+        guard.check_current_path().unwrap();
+        std::fs::rename(&path, directory.path().join("old.plasmite")).unwrap();
+        assert_eq!(
+            guard.check_current_path().unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        let replacement = Pool::create(&path, PoolOptions::new(1024 * 1024)).unwrap();
+        assert_eq!(
+            guard.check_current_path().unwrap_err().kind(),
+            ErrorKind::NotFound
+        );
+        replacement.check_current_path().unwrap();
     }
 
     #[cfg(unix)]

@@ -21,7 +21,7 @@ There are three top-level commands, ordered by cost and coverage:
 - `just check`: formatting, linting, Rust tests, version alignment, and Lite3
   integrity. Run it when handing work off and before every push; pull requests
   run the same command.
-- `just integration`: cookbook, ABI, conformance, cross-artifact, browser-script, and language
+- `just integration`: cookbook, ABI, cross-artifact, browser-script, and language
   binding checks. It requires Go, Node, Python, and `uv`.
 - `just ui-smoke`: exact browser sequence IDs, bounded history loading,
   session/clipboard recovery, and access setup guidance in a deterministic Node harness.
@@ -183,9 +183,24 @@ Run the HTTP protocol and remote-client suite separately:
 cargo test --test remote_integration
 ```
 
-All server-backed CLI and remote tests use an operating-system-assigned port
+Server-backed HTTP CLI and remote tests use an operating-system-assigned port
 published by the child after binding. They do not probe and release candidate
 ports or serialize the suite behind a global port lock.
+
+Run UDP server, client, and CLI proofs together:
+
+```sh
+cargo test --test udp_input --test udp_client --test udp_transport --test udp_transport_cli
+```
+
+These tests cover legacy input, send/store/follow byte preservation at the exact
+65,507-byte maximum, separate read opt-in, capacity, expired cookies and leases,
+quiet-pool renewal, replaced pools, finite retention failure, and live retention
+notices. A small proxy drops, duplicates, and reorders packets through the real
+server. CLI tests check receipt-free sends, finite reads, filters, timeout, and
+duplex. The language binding tests each run their UDP client against a child
+server. Node also checks that an opening handshake lets timers and close run.
+The Windows and ARM runtime CI suites include all four Rust UDP targets.
 
 Run the multi-process lock smoke test:
 
@@ -213,60 +228,28 @@ fi
 cargo audit --db .scratch/advisory-db --no-fetch
 ```
 
-## Conformance suite
+## Windows service upgrades
 
-The conformance suite validates that all language bindings behave consistently.
-See `conformance/README.md` for the full manifest format.
+Run these tests in an administrator terminal on Windows. They register and
+remove disposable native services using temporary pool directories.
 
-Run all conformance runners (recommended):
-
-```bash
-./scripts/conformance_all.sh
+```powershell
+cargo test --test cli_service windows_upgrade:: -- --ignored --test-threads=1
 ```
 
-Run the Rust conformance runner directly:
+Set `PLASMITE_WINDOWS_PREVIOUS_EXE` to the absolute path of an earlier
+Plasmite executable to test an upgrade from that version.
 
-```bash
-cargo run --bin plasmite-conformance -- conformance/sample-v0.json
-```
+## Binding contracts
 
-Run Go conformance directly:
+Run `just bindings-test` for the Go, Node, and Python tests. Each binding's
+suite tests message data and tags, structured errors, and both retention gap
+policies through its own API. Rust API tests run with `cargo test`.
 
-```bash
-cd bindings/go
-cargo build -p plasmite
-DYLD_LIBRARY_PATH="$(pwd)/../../target/debug${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
-LD_LIBRARY_PATH="$(pwd)/../../target/debug${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-PKG_CONFIG="/usr/bin/true" \
-CGO_CFLAGS="-I$(pwd)/../../include" \
-CGO_LDFLAGS="-L$(pwd)/../../target/debug" \
-go run ./cmd/plasmite-conformance ../../conformance/sample-v0.json
-```
-
-Run Node conformance directly:
-
-```bash
-cd bindings/node
-npm run build
-PLASMITE_LIB_DIR="$(pwd)/../../target/debug" \
-PLASMITE_BIN="$(pwd)/../../target/debug/plasmite" \
-node cmd/plasmite-conformance.js ../../conformance/sample-v0.json
-```
-
-Run Python conformance directly:
-
-```bash
-cd bindings/python
-PLASMITE_LIB_DIR="$(pwd)/../../target/debug" \
-PLASMITE_BIN="$(pwd)/../../target/debug/plasmite" \
-python3 cmd/plasmite_conformance.py ../../conformance/sample-v0.json
-```
-
-Cross-artifact compatibility smoke:
-
-```bash
-./scripts/cross_artifact_smoke.sh
-```
+Run `just cross-artifact-smoke` after building the bindings and CLI. Go
+creates a pool, Node opens a stream that reads a message from a separate
+CLI process, and Node, Python, and the CLI read each other's messages from
+the same file.
 
 ### C ABI boundary checks
 

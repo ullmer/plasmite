@@ -26,13 +26,13 @@ pub(super) struct TapArgs {
     pub(super) command: Vec<String>,
 }
 
-pub(super) fn run(args: TapArgs, context: &CliContext) -> Result<CommandResult, Error> {
-    if args.create_size.is_some() && !args.create {
-        return Err(Error::new(ErrorKind::Usage)
-            .with_message("--create-size requires --create")
-            .with_hint("Add --create or remove --create-size."));
-    }
+pub(super) fn run(mut args: TapArgs, context: &CliContext) -> Result<CommandResult, Error> {
+    args.create |= args.create_size.is_some();
+
     if args.pool.contains("://") {
+        if args.pool.starts_with("udp://") {
+            return Err(super::support::udp_unsupported());
+        }
         return Err(Error::new(ErrorKind::Usage)
             .with_message("tap accepts local pool refs only")
             .with_hint("Use a local pool name/path (for example `plasmite tap build -- ...`)."));
@@ -57,9 +57,7 @@ pub(super) fn run(args: TapArgs, context: &CliContext) -> Result<CommandResult, 
             Pool::create(&path, PoolOptions::new(size))?
         }
         Err(err) => {
-            return Err(add_missing_pool_create_hint(
-                err, "tap", &args.pool, &args.pool, None,
-            ));
+            return Err(add_missing_pool_create_hint(err));
         }
     };
 

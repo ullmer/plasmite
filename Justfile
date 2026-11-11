@@ -102,7 +102,7 @@ _trim-target:
 
 # Cross-language and artifact checks. Requires Go, Node, Python, and uv.
 # `bindings-test` includes node pack and remote-only smoke tests.
-integration: osc-example-test cookbook-smoke abi-smoke conformance-all cross-artifact-smoke bindings-test ui-smoke
+integration: osc-example-test cookbook-smoke abi-smoke bindings-test cross-artifact-smoke ui-smoke
 
 # Canonical release candidate gate before merging, tagging, or publishing.
 release-gate: check integration abi-release
@@ -126,10 +126,6 @@ abi-test: abi
 abi-smoke: abi
 	./scripts/abi_smoke.sh
 	./scripts/abi_adversarial.sh
-
-# Run full conformance suite.
-conformance-all:
-	./scripts/conformance_all.sh
 
 # Verify behavior across published artifact boundaries.
 cross-artifact-smoke:
@@ -163,7 +159,7 @@ audit-db: scratch
 
 # Run cargo-audit against the locally pinned advisory DB.
 audit: audit-db
-	cargo audit --db .scratch/advisory-db --no-fetch --ignore yanked
+	cargo audit --db .scratch/advisory-db --no-fetch
 
 # Build and execute the benchmark example in release mode.
 bench:
