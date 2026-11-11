@@ -25,6 +25,7 @@ class enoPlasmiteListener:
 
   tags = None
 
+  ########### constructor ###########
   def __init__(self, **kwargs):
 
     self.__dict__.update(kwargs)
@@ -35,8 +36,8 @@ class enoPlasmiteListener:
     logging.basicConfig(level=logging.INFO)
     self.logger = logging.getLogger(__name__)
 
-  #### _listen ####
 
+  ########### _listen ###########
   def _listen(self):
 
     try:
@@ -50,24 +51,17 @@ class enoPlasmiteListener:
         with client.open_pool(self.poolName) as pool:
 
           self.pool = pool
-
-          self.logger.info(
-            f"Connected to pool {self.poolName}"
-          )
-
+          self.logger.info(f"Connected to pool {self.poolName}")
           self.ready.set()
 
           for msg in pool.tail(
               timeout_ms=None,
               tags=self.tags):
 
-            if not self.running:
-              break
+            if not self.running: break
 
             try:
-              if self.callback:
-                self.callback(msg)
-
+              if self.callback: self.callback(msg)
             except Exception:
               traceback.print_exc()
 
@@ -76,27 +70,20 @@ class enoPlasmiteListener:
       self.logger.error("_listen setup issue")
       traceback.print_exc()
 
-  #### start ####
+  ########### start ###########
 
   def start(self):
 
     if not self.running:
-
       self.running = True
-
-      self.thread = threading.Thread(
-        target=self._listen,
-        daemon=True
-      )
-
+      self.thread = threading.Thread(target=self._listen, daemon=True)
       self.thread.start()
 
     self.ready.wait(timeout=1.0)
 
-  #### stop ####
+  ########### stop ###########
 
   def stop(self):
-
     self.running = False
 
     if self.thread:
@@ -126,7 +113,6 @@ def handle_message(msg):
   print("tags:", msg.tags)
   print("data:", msg.data)
   print()
-
 
 if __name__ == "__main__":
 
