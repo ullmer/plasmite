@@ -1,6 +1,6 @@
 /*
 Purpose: JavaScript entry point for the Plasmite Node binding.
-Key Exports: Client, Pool, Message, Stream, Durability, ErrorKind, replay.
+Key Exports: Client, Pool, Message, Stream, Durability, ErrorKind.
 Role: Thin wrapper around the native N-API addon.
 Invariants: Exports align with native symbols and v0 API semantics.
 Notes: Requires libplasmite to be discoverable at runtime.
@@ -39,6 +39,7 @@ function resolveNativeAddonPath() {
 const DEFAULT_POOL_DIR = path.join(os.homedir(), ".plasmite", "pools");
 const DEFAULT_POOL_SIZE = 1024 * 1024;
 const DEFAULT_POOL_SIZE_BYTES = DEFAULT_POOL_SIZE;
+const UINT64_MAX = (1n << 64n) - 1n;
 let native = null;
 let nativeLoadError = null;
 let nativeAddonPath = null;
@@ -304,107 +305,37 @@ class Pool {
 
   /**
    * Tail parsed messages with optional filtering.
-   * @param {{sinceSeq?: number|bigint, maxMessages?: number|bigint, timeoutMs?: number|bigint, tags?: string[], errorOnGap?: boolean}} [options]
+   * @param {{sinceSeq?: number|bigint, maxMessages?: number|bigint, timeoutMs?: number|bigint, tags?: string[], errorOnGap?: boolean, signal?: AbortSignal}} [options]
    * @returns {AsyncGenerator<Message, void, unknown>}
    */
   async *tail(options = {}) {
-    const { sinceSeq, maxMessages, timeoutMs, tags, errorOnGap = false } = options;
+    const { sinceSeq, maxMessages, timeoutMs, tags, errorOnGap = false, signal } = options;
     const requiredTags = normalizeTagFilter(tags);
     const limit = normalizeOptionalCount(maxMessages, "maxMessages");
-    const pollTimeoutMs = normalizePollingTimeout(timeoutMs);
-
+    const waitMs = BigInt(Math.floor(normalizePollingTimeout(timeoutMs)));
+    if (limit === 0 || signal?.aborted) return;
+    const stream = this.openStream(sinceSeq ?? null, requiredTags.length ? null : limit, null, errorOnGap);
+    const abort = () => stream.cancel();
+    signal?.addEventListener("abort", abort, { once: true });
     let delivered = 0;
-    let cursor = sinceSeq ?? null;
-    while (true) {
-      if (limit !== null && delivered >= limit) {
-        return;
-      }
-
-      const remaining = limit === null ? null : limit - delivered;
-      const streamLimit = requiredTags.length && remaining !== null ? null : remaining;
-      const stream = this.openStream(
-        cursor,
-        streamLimit,
-        pollTimeoutMs,
-        errorOnGap,
-      );
-      let sawRawMessage = false;
-      try {
-        for (const message of stream) {
-          sawRawMessage = true;
-          const parsed = parseMessage(message);
-          cursor = nextSinceSeq(parsed, cursor);
-          if (!messageHasTags(parsed, requiredTags)) {
-            continue;
-          }
-          delivered += 1;
-          yield parsed;
-          if (limit !== null && delivered >= limit) {
-            return;
-          }
-        }
-      } finally {
-        stream.close();
-      }
-      if (limit !== null && !sawRawMessage) {
-        return;
-      }
-      await sleep(0);
-    }
-  }
-
-  /**
-   * Replay parsed messages with original timing.
-   * @param {{speed?: number, sinceSeq?: number|bigint, maxMessages?: number|bigint, timeoutMs?: number|bigint, tags?: string[]}} [options]
-   * @returns {AsyncGenerator<Message, void, unknown>}
-   */
-  async *replay(options = {}) {
-    const { speed = 1.0, sinceSeq, maxMessages, timeoutMs, tags } = options;
-    if (speed <= 0) {
-      throw new Error("speed must be positive");
-    }
-
-    const requiredTags = normalizeTagFilter(tags);
-    const limit = normalizeOptionalCount(maxMessages, "maxMessages");
-    const pollTimeoutMs = normalizePollingTimeout(timeoutMs);
-    const streamLimit = requiredTags.length && limit !== null ? null : limit;
-    const stream = this.openStream(
-      sinceSeq ?? null,
-      streamLimit,
-      pollTimeoutMs,
-    );
-
-    const messages = [];
     try {
-      for (const message of stream) {
-        const parsed = parseMessage(message);
-        if (!messageHasTags(parsed, requiredTags)) {
+      while (!signal?.aborted) {
+        const result = await stream.nextJsonWait(waitMs);
+        if (signal?.aborted || result.status === 2 || result.status === 3) return;
+        if (result.status === 0) {
+          if (limit !== null) return;
           continue;
         }
-        messages.push({
-          message: parsed,
-          timeMs: messageTimeMs(parsed),
-        });
-        if (limit !== null && messages.length >= limit) {
-          break;
+        const message = parseMessage(result.message);
+        if (messageHasTags(message, requiredTags)) {
+          delivered++;
+          yield message;
+          if (limit !== null && delivered >= limit) return;
         }
       }
     } finally {
+      signal?.removeEventListener("abort", abort);
       stream.close();
-    }
-
-    let prevMs = null;
-    for (const entry of messages) {
-      if (prevMs !== null && entry.timeMs !== null && speed > 0) {
-        const delay = (entry.timeMs - prevMs) / speed;
-        if (delay > 0) {
-          await sleep(delay);
-        }
-      }
-      if (entry.timeMs !== null) {
-        prevMs = entry.timeMs;
-      }
-      yield entry.message;
     }
   }
 
@@ -439,27 +370,6 @@ function messageHasTags(message, requiredTags) {
     return false;
   }
   return requiredTags.every((tag) => messageTags.includes(tag));
-}
-
-function messageTimeMs(message) {
-  if (!message || !(message.time instanceof Date)) {
-    return null;
-  }
-  const value = message.time.getTime();
-  return Number.isFinite(value) ? value : null;
-}
-
-function nextSinceSeq(message, fallback) {
-  if (!message) {
-    return fallback;
-  }
-  if (typeof message.seq === "bigint") {
-    return message.seq + 1n;
-  }
-  if (typeof message.seq === "number" && Number.isFinite(message.seq)) {
-    return message.seq + 1;
-  }
-  return fallback;
 }
 
 function decorateLite3Frame(frame) {
@@ -548,10 +458,20 @@ class Stream {
     }
   }
 
-  /**
-   * Close the stream handle.
-   * @returns {void}
-   */
+  /** Read on a native worker: 0=wait expired, 1=value, 2=finished, 3=cancelled. */
+  async nextJsonWait(timeoutMs) {
+    try {
+      const result = await this._inner.nextJsonWait(normalizeUint64(timeoutMs, "timeoutMs"));
+      return result;
+    } catch (err) {
+      throw wrapNativeError(err);
+    }
+  }
+
+  cancel() {
+    this._inner.cancel();
+  }
+
   close() {
     this._inner.close();
   }
@@ -596,10 +516,21 @@ class Lite3Stream {
     }
   }
 
-  /**
-   * Close the Lite3 stream handle.
-   * @returns {void}
-   */
+  /** Read on a native worker: 0=wait expired, 1=value, 2=finished, 3=cancelled. */
+  async nextWait(timeoutMs) {
+    try {
+      const result = await this._inner.nextWait(normalizeUint64(timeoutMs, "timeoutMs"));
+      if (result.frame) decorateLite3Frame(result.frame);
+      return result;
+    } catch (err) {
+      throw wrapNativeError(err);
+    }
+  }
+
+  cancel() {
+    this._inner.cancel();
+  }
+
   close() {
     this._inner.close();
   }
@@ -609,14 +540,260 @@ class Lite3Stream {
   }
 }
 
-/**
- * Backward-compatible replay helper.
- * @param {Pool} pool
- * @param {object} [options]
- * @returns {AsyncGenerator<Message, void, unknown>}
- */
-async function* replay(pool, options = {}) {
-  yield* pool.replay(options);
+const UdpStart = Object.freeze({
+  new: () => Object.freeze({ kind: "new" }),
+  last: (count) => Object.freeze({ kind: "last", count: normalizeUint64(count, "count") }),
+  since: (timestampNs) => Object.freeze({ kind: "since", timestampNs: normalizeUint64(timestampNs, "timestampNs") }),
+  sequence: (seq) => Object.freeze({ kind: "sequence", seq: normalizeUint64(seq, "seq") }),
+});
+
+class UdpClient {
+  constructor(endpoint) {
+    if (!native) {
+      throw makeNativeUnavailableError();
+    }
+    if (typeof endpoint !== "string" || !endpoint) {
+      throw new TypeError("endpoint is required");
+    }
+    try {
+      this._inner = new native.UdpClient(endpoint);
+    } catch (err) {
+      throw wrapNativeError(err);
+    }
+  }
+
+  openPool(poolName) {
+    try {
+      return new UdpPool(this._inner.openPool(poolName));
+    } catch (err) {
+      throw wrapNativeError(err);
+    }
+  }
+
+  close() {
+    this._inner.close();
+  }
+
+  [Symbol.dispose]() {
+    this.close();
+  }
+}
+
+class UdpPool {
+  constructor(inner) {
+    this._inner = inner;
+  }
+
+  sendJson(payload, tags = []) {
+    const encoded = JSON.stringify(payload);
+    if (encoded === undefined) {
+      throw new TypeError("payload must be JSON serializable");
+    }
+    try {
+      this._inner.sendJson(Buffer.from(encoded), tags);
+    } catch (err) {
+      throw wrapNativeError(err);
+    }
+  }
+
+  sendLite3(payload) {
+    if (!Buffer.isBuffer(payload)) {
+      throw new TypeError("payload must be a Buffer containing a complete Lite3 document");
+    }
+    try {
+      this._inner.sendLite3(payload);
+    } catch (err) {
+      throw wrapNativeError(err);
+    }
+  }
+
+  follow(options = {}) {
+    const start = options.start ?? UdpStart.new();
+    const live = options.live ?? true;
+    let startKind;
+    let startValue = 0n;
+    switch (start.kind) {
+      case "new":
+        startKind = 0;
+        break;
+      case "last":
+        startKind = 1;
+        startValue = normalizeUint64(start.count, "start.count");
+        break;
+      case "since":
+        startKind = 2;
+        startValue = normalizeUint64(start.timestampNs, "start.timestampNs");
+        break;
+      case "sequence":
+        startKind = 3;
+        startValue = normalizeUint64(start.seq, "start.seq");
+        break;
+      default:
+        throw new TypeError("start must come from UdpStart.new, last, since, or sequence");
+    }
+    try {
+      return this._inner
+        .follow(startKind, BigInt(startValue), Boolean(live))
+        .then((inner) => new UdpFollow(inner), (err) => {
+          throw wrapNativeError(err);
+        });
+    } catch (err) {
+      throw wrapNativeError(err);
+    }
+  }
+
+  close() {
+    this._inner.close();
+  }
+
+  [Symbol.dispose]() {
+    this.close();
+  }
+}
+
+class UdpFollow {
+  constructor(inner) {
+    this._inner = inner;
+    this._closed = false;
+    this._cancelled = false;
+  }
+
+  async nextEvent(timeoutMs = 1000, { signal } = {}) {
+    const timeout = normalizeUint64(timeoutMs, "timeoutMs");
+    const deadline = process.hrtime.bigint() + timeout * 1_000_000n;
+    for (;;) {
+      if (signal?.aborted) {
+        throw abortError(signal);
+      }
+      if (this._closed || this.finished) {
+        return null;
+      }
+
+      const remainingNs = deadline - process.hrtime.bigint();
+      if (remainingNs <= 0n && timeout !== 0n) {
+        return null;
+      }
+      try {
+        // Keep native polling nonblocking so another follower, timer, or
+        // AbortSignal can run while this call waits for the next event.
+        const wait = this._inner.nextEvent(0n);
+        if (signal?.aborted) {
+          throw abortError(signal);
+        }
+        if (wait.status === 1) {
+          return decorateUdpEvent(wait.event);
+        }
+        if (wait.status === 2 || wait.status === 3 || timeout === 0n) {
+          return null;
+        }
+      } catch (err) {
+        if (err?.name === "AbortError") {
+          throw err;
+        }
+        throw wrapNativeError(err);
+      }
+      if (process.hrtime.bigint() >= deadline) {
+        return null;
+      }
+      const untilDeadlineMs = (deadline - process.hrtime.bigint() + 999_999n) / 1_000_000n;
+      await sleep(Number(untilDeadlineMs < 10n ? untilDeadlineMs : 10n));
+    }
+  }
+
+  get finished() {
+    return this._closed || this._cancelled || this._inner.isFinished;
+  }
+
+  async *events({ pollIntervalMs = 50, signal } = {}) {
+    const timeoutMs = normalizeUint64(pollIntervalMs, "pollIntervalMs");
+    while (true) {
+      const event = await this.nextEvent(timeoutMs, { signal });
+      if (event) {
+        yield event;
+        continue;
+      }
+      if (this.finished) {
+        return;
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+
+  [Symbol.asyncIterator]() {
+    return this.events();
+  }
+
+  cancel() {
+    if (!this._closed) {
+      this._cancelled = true;
+      this._inner.cancel();
+    }
+  }
+
+  close() {
+    if (!this._closed) {
+      this._closed = true;
+      this._inner.close();
+    }
+  }
+
+  [Symbol.dispose]() {
+    this.close();
+  }
+}
+
+function abortError(signal) {
+  const reason = signal?.reason;
+  if (reason instanceof Error) {
+    return reason;
+  }
+  return new DOMException(
+    reason === undefined ? "The operation was aborted" : String(reason),
+    "AbortError",
+  );
+}
+
+function decorateUdpEvent(event) {
+  if (event.kind === "frame") {
+    return Object.freeze({
+      kind: "frame",
+      seq: event.seq,
+      timestampNs: event.timestampNs,
+      payload: event.payload,
+      message: parseMessage(event.message),
+    });
+  }
+  if (event.kind === "gap") {
+    return Object.freeze({
+      kind: "gap",
+      first: event.first,
+      last: event.last,
+      reason: event.reason,
+    });
+  }
+  return Object.freeze({
+    kind: "progress",
+    startSeq: event.startSeq,
+    nextSeq: event.nextSeq,
+    endSeq: event.endSeq ?? null,
+    terminal: Boolean(event.terminal),
+    retentionGap: Boolean(event.retentionGap),
+  });
+}
+
+function normalizeUint64(value, name) {
+  let integer;
+  if (typeof value === "bigint") {
+    integer = value;
+  } else if (typeof value === "number" && Number.isSafeInteger(value)) {
+    integer = BigInt(value);
+  } else {
+    throw new TypeError(`${name} must be a bigint or safe integer`);
+  }
+  if (integer < 0n || integer > UINT64_MAX) {
+    throw new RangeError(`${name} must fit an unsigned 64-bit integer`);
+  }
+  return integer;
 }
 
 module.exports = {
@@ -624,6 +801,10 @@ module.exports = {
   Pool,
   Stream,
   Lite3Stream,
+  UdpClient,
+  UdpPool,
+  UdpFollow,
+  UdpStart,
   Message,
   DEFAULT_POOL_DIR,
   DEFAULT_POOL_SIZE,
@@ -635,5 +816,4 @@ module.exports = {
   RemoteError,
   RemotePool,
   parseMessage,
-  replay,
 };

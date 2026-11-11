@@ -74,7 +74,7 @@ access, follow [the browser setup steps](#open-pools-in-a-browser).
 ### 4. Recipient: send and read a message
 
 ```console
-echo '{"text":"hello from Alex"}' | plasmite feed https://pools.example.net:9743/events --data
+echo '{"text":"hello from Alex"}' | plasmite feed https://pools.example.net:9743/events
 plasmite follow https://pools.example.net:9743/events --tail 1
 ```
 
@@ -234,13 +234,40 @@ the routing name, must fit within 65,507 bytes. See the
 
 The listener can append to every pool in its directory, including pools
 created later. A non-loopback bind gives every reachable sender that same
-directory-wide append access. UDP has no authentication, encryption, reply, or
-delivery confirmation. Bind only on a network whose rules limit senders. Use
-HTTPS when a sender needs authenticated access or a response.
+directory-wide append access. UDP has no authentication, encryption, or
+per-message delivery confirmation. Bind only on a network whose rules limit
+senders. Use HTTPS when a sender needs authenticated access or a committed
+write receipt.
+
+`serve --udp-follow` enables reads as well as input at the default UDP address.
+Combine it with `--udp=IP:PORT` for a custom address. Any reachable client can
+then read every served pool after proving that it receives replies at its
+socket. This check limits spoofed bulk replies; it grants no identity or access
+rights. Old `--udp` configurations keep reads disabled.
+
+Clients use `feed`, `follow`, or `duplex` with `udp://HOST:PORT/POOL`. Follow
+supports new messages and selected history. The
+[receive policy](../../spec/udp/v1/SPEC.md#receive-ordering-and-notices) provides
+arrival-order delivery, including late messages and duplicates. This source
+change awaits a major release. Only explicit server skips produce notices;
+sequence jumps
+and progress never prove network loss or block later DATA. A finite follow ends
+on terminal progress, so packets still in flight may go unread.
+
+Follow renews a 30-second lease every 10 seconds while receiving. It never
+retries message delivery or falls back to HTTP. Outgoing DATA includes 40 bytes
+of framing within the same 65,507-byte maximum. See the
+[UDP transport contract](../../spec/udp/v1/SPEC.md) for controls and events.
+
+`--max-tail-concurrency` limits UDP followers separately from HTTP tails. A
+slow or unreachable follower does not hold up append input.
 
 An installed server keeps the setting through restarts and updates. Enable it
 with `plasmite --dir ./shared serve install --udp`; clear it with
-`plasmite --dir ./shared serve install --no-udp`.
+`plasmite --dir ./shared serve install --no-udp`. Enable reads with
+`serve install --udp-follow`; withdraw reads while retaining input with
+`serve install --no-udp-follow`. An update without UDP options keeps both saved
+choices.
 
 ## Deploy a server
 
@@ -253,7 +280,7 @@ your network routes to the server.
 | --- | --- | --- |
 | Local HTTP | `127.0.0.1:9700` | Pool use and access administration for trusted local processes. No credentials required. |
 | Remote HTTPS | `0.0.0.0:9743` | Pool use through access keys, browser sessions, or MCP authorization. |
-| UDP input | Off; `127.0.0.1:9701` when enabled | Append one JSON or Lite3 message per datagram, without authentication or delivery confirmation. |
+| UDP | Off; `127.0.0.1:9701` when enabled | `--udp` accepts input; `--udp-follow` also serves best-effort follow. Both grant access without credentials. |
 
 Use `--bind` and `--remote-bind` to change the listening addresses. Restrict
 network access to intended recipients. Keep the local HTTP listener on
@@ -320,13 +347,12 @@ These commands target the installed setup, not a foreground server. Run
 URL sets the listener port on first install; later URL changes keep the
 saved listener unless you supply `--remote-bind`. With no new options,
 `install` keeps the saved settings, installs the current Plasmite executable,
-and starts the service. On Windows, updates stop the service before replacing
-its executable and setup. A failed update restores the prior service while
-preserving its identity, certificates, and keys. Updates retain the installed
-listener addresses unless `--remote-bind` changes them.
-If Windows refuses executable replacement while the service runs, the update
-restores the prior service. Run `serve stop`, then repeat `serve install` from
-the new Plasmite executable.
+and starts the service. On Windows, Plasmite stages the executable in the
+inactive installation slot, stops the service, saves the candidate setup,
+and switches the service to the candidate. If the candidate fails to start,
+Plasmite switches back and restores the prior service state, identity, and
+certificates. Updates retain the installed listener addresses unless you
+supply `--remote-bind`.
 If rollback cannot finish, the error names the retained recovery files.
 Complete recovery in an administrator terminal before installing again.
 
@@ -439,7 +465,7 @@ hidden prompt, then check the connection and send/read a message:
 ```console
 plasmite access connect https://node.tail123.ts.net:9743
 plasmite access status https://node.tail123.ts.net:9743
-echo '{"text":"hello over the tailnet"}' | plasmite feed https://node.tail123.ts.net:9743/events --data
+echo '{"text":"hello over the tailnet"}' | plasmite feed https://node.tail123.ts.net:9743/events
 plasmite follow https://node.tail123.ts.net:9743/events --tail 1 --no-follow --format json
 ```
 

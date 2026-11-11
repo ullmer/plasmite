@@ -23,15 +23,6 @@ impl OutputMode {
     pub(crate) fn is_binary(self) -> bool {
         matches!(self, Self::Lite3 | Self::Lite3Raw)
     }
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Human => "pretty",
-            Self::Json => "json",
-            Self::Yaml => "yaml",
-            Self::Lite3 => "lite3",
-            Self::Lite3Raw => "lite3-raw",
-        }
-    }
     pub(crate) fn is_structured(self) -> bool {
         matches!(self, Self::Json | Self::Yaml)
     }
@@ -147,7 +138,7 @@ mod tests {
             "null": null, "array": [], "map": {},
         });
         let output = render_output(&value, OutputMode::Yaml);
-        let decoded: Value = serde_yaml_ng::from_str(&output).unwrap();
+        let decoded: Value = yaml_serde::from_str(&output).unwrap();
         assert_eq!(decoded, value);
         assert_eq!(decoded["unsigned"].as_u64(), Some(u64::MAX));
         assert_eq!(decoded["signed"].as_i64(), Some(i64::MIN));

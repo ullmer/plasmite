@@ -1,6 +1,6 @@
-# Plasmite CLI Spec (2.x)
+# Plasmite CLI Spec (1.2 and later)
 
-This document defines the normative CLI compatibility contract for Plasmite 2.x.
+This document defines the normative CLI compatibility contract starting with Plasmite 1.2.
 The historical `spec/v0/` path is retained for existing documentation links;
 it does not preserve the superseded pre-1.0 CLI behavior.
 It keeps only script-level guarantees; signatures, walkthroughs, and examples live in code docs and `docs/cookbook.md`.
@@ -12,10 +12,11 @@ It keeps only script-level guarantees; signatures, walkthroughs, and examples li
 
 ## Versioning + Compatibility
 
-The CLI follows package major version 2. The hard cutover removes superseded
-format and input switches and changes feed's default message interpretation.
+The 1.2.0 breaking cutover removes superseded format and input switches and
+changes feed's default message interpretation. Later releases follow the
+package major-version compatibility policy.
 No compatibility mode accepts the earlier behavior. The historical document
-path stays available. See [upgrading to 2.0](../../docs/record/upgrading-2.0.md).
+path stays available. See [upgrading to 1.2.0](../../docs/record/upgrading-1.2.md).
 Language APIs, HTTP, MCP, and pool files keep their separately versioned contracts.
 
 ## Stable Surface
@@ -37,6 +38,10 @@ Language APIs, HTTP, MCP, and pool files keep their separately versioned contrac
 form the current command inventory. The separately versioned MCP contract
 owns its protocol guarantees.
 
+The source checkout includes next-major duplex changes described in the
+[upgrade guide](../../docs/record/upgrading-next-major.md); do not ship them
+under the current 1.x package version.
+
 ### Messages, input, and output
 
 - Global `--dir` selects one local pool directory in every command scope.
@@ -48,11 +53,14 @@ owns its protocol guarantees.
 - `feed`, `fetch`, `follow`, and duplex receive output carry complete messages:
   `seq`, `time`, `meta.tags`, and object `data`. feed writes its complete newly
   appended message. Diagnostics go to stderr and never mix with stdout messages.
-- feed accepts a positional message, a file, or stdin. Default JSON/YAML input
-  requires object data, accepts optional meta.tags (default []), and rejects
-  unknown message/meta fields. It validates supplied source seq/time but assigns
-  destination seq/time. `feed --data` instead treats each object as application
-  contents; `--tag` requires --data. Input source never changes this interpretation.
+- feed accepts a positional object/message, a file, or stdin. JSON/YAML objects
+  are application data unless their keys are exactly seq, time, meta, data and
+  meta is an object with exactly tags. This reserved complete-message shape
+  requires unsigned integer seq, RFC 3339 time, string-list meta.tags, and object
+  data. Invalid reserved messages fail; partial envelopes and extra fields are
+  application data. Copies preserve data/tags and assign destination seq/time.
+  `--tag` is accepted for application
+  data and rejected for complete messages. Input source never changes this rule.
 - Default feed input recognizes JSON objects, marked YAML documents and framed
   Lite3 from their syntax. It does not wait for another message or EOF after a
   complete record. Explicit --input-format accepts auto, json, yaml, lite3,
@@ -67,7 +75,7 @@ owns its protocol guarantees.
   payload without re-encoding. An empty stream may contain zero bytes.
 - lite3-raw output requires fetch. Raw input requires --input-format lite3-raw
   and treats the entire file/stdin through EOF as one attachment. Neither binary
-  input form accepts --data, --tag or an inline argument. Payloads may occupy at
+  input form accepts --tag or an inline argument. Payloads may occupy at
   most 256 MiB and must fit the destination pool. Text buffering permits JSON
   escaping overhead (six times the payload limit plus 64 KiB). Remote servers
   keep their configured request-body limits.
@@ -78,7 +86,12 @@ owns its protocol guarantees.
 - Finite history reads return nonzero when retention removes selected messages.
   Live follow reports loss on stderr and continues. access status prints its
   report and returns nonzero when reachability or acceptance fails.
-- --json, --yaml, --jsonl, --in, --data-only and --errors are removed.
+- --data, --json, --yaml, --jsonl, --in, --data-only and --errors are removed.
+- Duplex accepts the same input formats on terminals and pipes. It gives no
+  meaning to application fields and delivers its own appends. --me and
+  --echo-self are removed. Successful input EOF closes sending; reception
+  continues until cancellation, output failure, or the idle-output timeout.
+  The receiver chooses its starting position before the first send.
 - Binary output requires a message command. Reports retain their JSON/YAML
   fields. Help/completion remain text, tap preserves child output, MCP keeps
   JSON-RPC. Product version output uses the shared development/release identity.
@@ -283,6 +296,12 @@ Plasmite 1.0 provides native access-key sharing. It keeps the existing spec path
 - Incompatible on-disk changes must bump format version.
 - Older binaries must refuse newer incompatible formats with actionable guidance.
 
+### Pool Creation
+
+Local `feed` and `tap` treat `--create-size SIZE` as create-if-missing. Existing
+pools remain unchanged; commands without creation options still fail for a missing
+pool. Remote feed still rejects creation options, and tap remains local-only.
+
 ### Append Retries
 
 - `feed --retry N` retries `Busy` at most N times after the initial attempt,
@@ -296,8 +315,9 @@ Plasmite 1.0 provides native access-key sharing. It keeps the existing spec path
   retained messages before applying tag or jq filters.
 - `--since` accepts RFC 3339 timestamps and relative values such as `5m`,
   resolved at invocation start. Local and remote follow/duplex accept it.
-- `follow --no-follow` requires a history selector and stops at the initial
-  history boundary even while writers append. `--one` stops at the first match.
+- `follow --no-follow` alone selects all currently retained history; with a
+  history selector it reads that selection. It stops at the initial upper sequence
+  boundary even while writers append. `--one` stops at the first match.
 - Local `--replay SPEED` requires a history selector and implies finite
   playback. Output deadlines also bound replay waits. Remote replay is rejected.
 - CLI `--timeout` is an idle output deadline; API tails retain their separately
@@ -338,3 +358,25 @@ Current remote shorthand constraints (documented, non-frozen):
 - CLI operating model: `docs/cli.md`
 - Remote protocol contract: `spec/remote/v0/SPEC.md`
 - Public API contract: `spec/api/v0/SPEC.md`
+
+## UDP message targets
+
+`feed`, `follow`, and `duplex` also accept explicit `udp://HOST:PORT/POOL` targets.
+`serve --udp-follow` enables UDP reads and implies the default/configured UDP input
+address. Existing `--udp` remains append-only. Installed removal/preservation
+rules follow the [UDP v1 contract](../udp/v1/SPEC.md).
+
+UDP feed never emits a stored-message receipt. Exit 0 means local socket
+submission, not storage. UDP follow/history use the normal filters and formats
+with best-effort delivery. The
+[arrival-order policy](../udp/v1/SPEC.md#receive-ordering-and-notices) describes
+unreleased source behavior; see that specification's source status. Deliver
+matching DATA
+in arrival order, including late messages and duplicates. Sequence/progress
+jumps never create inferred gaps or suppress DATA. Explicit oversized/pressure
+skips produce notices and finite exit 1; confirmed server retention gaps exit 9.
+A finite follow ends on terminal progress and drains accepted events. Exit 0
+requires no observed server skip/error; it gives no assurance of complete
+delivery. No-matching-output timeout exits 124.
+No automatic write retry, HTTP fallback, or gap repair. Unsupported commands or
+options reject a UDP target before work, with Usage.

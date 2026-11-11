@@ -1,6 +1,9 @@
-# Plasmite Public API Spec (1.x)
+# Plasmite Public API Spec (source checkout)
 
-This document defines the normative public API contract for Plasmite 1.x across bindings.
+This document defines the public API contract across bindings. The source checkout
+includes breaking changes that await the next major release; see the
+[next major upgrade guide](../../../docs/record/upgrading-next-major.md).
+Published 1.x APIs retain their release-specific contract.
 The historical path is retained; Rust source-level breaking changes are
 documented in [the upgrade guide](../../../docs/record/upgrading-1.0.md).
 It is intentionally signature-free: language-level method/function signatures live in code-level API docs.
@@ -16,7 +19,8 @@ It is intentionally signature-free: language-level method/function signatures li
 
 ## Versioning + Compatibility
 
-- The API surface follows the package major version: `1.x`.
+- The API surface follows the package major version. Do not ship the pending
+  SDK replay removals or UDP behavior changes under a 1.x package version.
 - Compatibility within 1.x is additive-only.
 - Existing field/operation meanings must not be removed or redefined.
 - New fields must be optional with defaults that preserve old behavior.
@@ -122,13 +126,37 @@ Stable error kinds:
 
 ### Streaming Semantics
 
-- Ordering is strictly by `seq` within a pool.
+The C interface adds bounded waits without changing legacy `*_next` calls:
+
+- `plsm_stream_next_wait` and `plsm_lite3_stream_next_wait` take a per-call
+  wait budget in milliseconds. They return 1 for a message, 0 for wait expiry,
+  2 for stream completion (including the original open-time deadline), 3 for
+  cancellation, and -1 for an error. Wait expiry retains the cursor and counts.
+  A zero budget polls once. A file operation already in progress may exceed the
+  wait budget; the budget cannot interrupt an operating-system file lock.
+- `plsm_stream_cancel` and `plsm_lite3_stream_cancel` may run during a read.
+  Cancellation is permanent and the reader checks it at most every 50 ms while
+  waiting for messages. The caller must wait for active reads before freeing
+  the handle. Each stream accepts one reader at a time.
+- Legacy `*_next` still returns 1 for a message, 0 for completion, and -1 for
+  errors. Stream handles own their pool independently of the originating pool.
+- Node local asynchronous tails run bounded native reads on worker threads and
+  accept an `AbortSignal`. Go local tails use bounded waits to check context
+  cancellation. Both retain one native stream instead of reopening it at wait
+  expiry. Matching-message limits apply after tag filtering. Python local
+  streams expose bounded waits and concurrent cancellation; high-level tails
+  accept an optional `threading.Event` cancellation flag.
+
+- Local and HTTP tails deliver messages strictly by `seq` within a pool.
+  Standalone UDP follows use the separate
+  [arrival-order receive policy](../../udp/v1/SPEC.md#receive-ordering-and-notices).
 - Streams support explicit caller cancellation.
 - Implementations must respect backpressure and avoid unbounded buffering.
 - Once cancellation is observed, no further messages may be delivered.
 - A local tail cancellation flag ends the tail promptly and returns no further
   messages after cancellation is observed.
-- Reconnect behavior (for remote transports) must be explicit and must not reorder messages.
+- HTTP reconnect behavior must be explicit and must not reorder messages.
+  UDP follows never reconnect automatically.
 - Remote one-shot network requests use a 30-second deadline in the Rust client.
   A transport timeout or incomplete successful-response body returns `Io`;
   an HTTP error response retains its status-based error mapping. System DNS
@@ -173,14 +201,13 @@ do not change into SDK `RetentionGap` errors.
 A binding is conformant when it implements the operation families above and preserves error kinds/semantics.
 Conformance suites may rely on CLI spec formatting rules for shared message validation behavior.
 
-### Replay
+### Playback timing
 
-Rust replay captures its initial retained-history boundary; later appends do
-not prolong construction. A requested tail retains at most that many matches
-after the API's time filter. Replay speed must be finite and nonnegative;
-zero delivers immediately. Unrepresentable playback delays return `Usage`.
-This API eagerly owns its selected messages; CLI replay separately streams
-bounded cursor state.
+SDKs expose ordinary message streams. Applications own playback timing,
+cancellation during delays, and any collection needed to protect a dataset from
+later overwrite. CLI `follow --replay` remains available. The next major release
+removes the earlier binding-specific replay APIs; ordinary stream operations and
+the C ABI retain their contracts.
 
 ## Non-Contract Surface
 
@@ -191,3 +218,41 @@ bounded cursor state.
 
 - CLI contract: `spec/v0/SPEC.md`
 - Remote protocol contract: `spec/remote/v0/SPEC.md`
+
+## UDP send and follow
+
+Standalone `UdpClient` / `UdpPool` APIs submit unconfirmed messages and follow
+best-effort streams. They do not change `RemoteClient` confirmed append semantics.
+`send_json` encodes the shared message shape to Lite3; `send_lite3` validates and
+preserves complete bytes. Both return only local validation/OS submission success,
+never destination sequence/time. A constructor resolves one UDP endpoint once;
+open validates Name or a same-origin UDP Uri without claiming remote existence.
+`UdpClient::parse_pool_url` splits a validated URL into endpoint and decoded name
+without DNS or sockets; the CLI uses the same parser.
+
+`UdpFollowOptions` chooses New, Last, Since timestamp, or Sequence and live/finite.
+Follow events carry an owned exact-byte frame, an explicit server skipped
+range/reason, or progress. The
+[arrival-order policy](../../udp/v1/SPEC.md#receive-ordering-and-notices) describes
+an unreleased amendment to the 1.x behavior; shipment requires a major release.
+Clients deliver valid matching DATA in arrival order, including late messages
+and duplicates.
+Sequence/progress jumps must neither create inferred gaps nor suppress DATA.
+Consumers choose whether to reorder or discard messages. Apply timestamp, tag,
+and application filters to each message without creating skips. A finite follow
+ends on terminal progress after draining accepted events; packets still in
+flight may go unread. No ordering buffer, duplicate suppression, or data repair.
+Explicit polling wait deadlines return no event; stream end has an independent
+finished state.
+A zero timeout polls the socket without blocking and still checks renewal and
+liveness. Keep consuming to maintain the lease.
+Close sends one best-effort stop; stopped consumers do not renew secretly.
+
+The same behavior applies in C, Python, Node, and Go; preserve uint64 metadata.
+`Pool::check_current_path` compares an open handle's native identity to its path
+without writing. `Pool::into_path_guard` consumes the pool, releases its mapping,
+and keeps the original file handle and path for the same read-only identity check.
+Replacement/deletion ends the old UDP stream, including completion renewal.
+Public `Gap` names denote explicit server skips for compatibility. `Unknown`
+remains a reserved public reason; clients reject it in SKIP packets.
+Wire behavior and network limits live in [UDP v1](../../udp/v1/SPEC.md).

@@ -39,7 +39,7 @@ fn assert_no_ansi(output: &Output) {
 
 fn yaml_documents(bytes: &[u8]) -> Vec<Value> {
     let text = std::str::from_utf8(bytes).expect("YAML output is UTF-8");
-    serde_yaml_ng::Deserializer::from_str(text)
+    yaml_serde::Deserializer::from_str(text)
         .map(|document| Value::deserialize(document).expect("valid YAML document"))
         .collect()
 }
@@ -110,7 +110,7 @@ fn fetch_yaml_matches_json_for_local_and_remote_edge_values() {
     let feed = cmd()
         .arg("--dir")
         .arg(&pool_dir)
-        .args(["feed", "edge-values", "--data"])
+        .args(["feed", "edge-values"])
         .arg(input)
         .args(["--format", "yaml", "--color", "always"])
         .output()
@@ -194,7 +194,7 @@ fn fetched_yaml_message_feeds_without_an_input_format_override() {
     let appended = cli_at(
         &pool_dir,
         &[
-            "feed", "source", "--data", &input, "--tag", "copy", "--format", "json",
+            "feed", "source", &input, "--tag", "copy", "--format", "json",
         ],
     );
     let source_message = json_report(&appended);
@@ -269,7 +269,7 @@ fn finite_follow_emits_marked_yaml_documents() {
         let output = cmd()
             .arg("--dir")
             .arg(&pool_dir)
-            .args(["feed", "history", "--data"])
+            .args(["feed", "history"])
             .arg(format!("{{\"value\":{value}}}"))
             .output()
             .expect("feed history value");
@@ -313,7 +313,6 @@ fn feed_accepts_explicit_yaml_data_and_writes_complete_messages() {
         .args([
             "feed",
             "json-input",
-            "--data",
             "{\"value\":1}",
             "--format",
             "yaml",
@@ -330,7 +329,6 @@ fn feed_accepts_explicit_yaml_data_and_writes_complete_messages() {
         .args([
             "feed",
             "json-input",
-            "--data",
             "--input-format",
             "yaml",
             "value: 2",
@@ -359,6 +357,42 @@ fn feed_accepts_explicit_yaml_data_and_writes_complete_messages() {
 }
 
 #[test]
+fn feed_keeps_complete_yaml_messages_before_a_rejected_document() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let pool_dir = temp.path().join("pools");
+    create_pool(&pool_dir, "events");
+
+    let mut child = cmd()
+        .arg("--dir")
+        .arg(&pool_dir)
+        .args(["feed", "events", "--format", "json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start feed");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"---\nstate: 'null'\nready: true\n...\n---\nstate: first\nstate: second\n...\n---\nstate: last\n...\n")
+        .expect("write YAML stream");
+    let result = child.wait_with_output().expect("wait for feed");
+    assert!(!result.status.success(), "duplicate keys must fail");
+
+    let first = cli_at(&pool_dir, &["fetch", "events", "1", "--format", "json"]);
+    assert_eq!(
+        json_report(&first)["data"],
+        serde_json::json!({"state": "null", "ready": true})
+    );
+    let next = cli_at(
+        &pool_dir,
+        &["feed", "events", r#"{"state":"next"}"#, "--format", "json"],
+    );
+    assert_eq!(json_report(&next)["seq"], 2);
+}
+
+#[test]
 fn yaml_parse_errors_and_removed_formats_fail_without_mutation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let pool_dir = temp.path().join("pools");
@@ -373,15 +407,7 @@ fn yaml_parse_errors_and_removed_formats_fail_without_mutation() {
     let invalid_feed_format = cmd()
         .arg("--dir")
         .arg(&pool_dir)
-        .args([
-            "feed",
-            "not-created",
-            "--create",
-            "--data",
-            "{}",
-            "--format",
-            "jsonl",
-        ])
+        .args(["feed", "not-created", "--create", "{}", "--format", "jsonl"])
         .output()
         .expect("unsupported feed format");
     assert_eq!(invalid_feed_format.status.code(), Some(2));

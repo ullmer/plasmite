@@ -8,11 +8,12 @@ Notes: The addon links against libplasmite and does not re-implement internals.
 */
 
 use libc::{c_char, c_int};
-use napi::bindgen_prelude::{BigInt, Buffer, Either, Status};
-use napi::{Env, Error, Result};
+use napi::bindgen_prelude::{AsyncTask, BigInt, Buffer, Either, Status};
+use napi::{Env, Error, Result, Task};
 use napi_derive::napi;
 use std::ffi::{CStr, CString};
 use std::ptr;
+use std::sync::Arc;
 
 #[repr(C)]
 struct plsm_client_t {
@@ -35,9 +36,42 @@ struct plsm_lite3_stream_t {
 }
 
 #[repr(C)]
+struct plsm_udp_client_t {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+struct plsm_udp_pool_t {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+struct plsm_udp_follow_t {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
 struct plsm_buf_t {
     data: *mut u8,
     len: usize,
+}
+
+#[repr(C)]
+struct plsm_udp_event_t {
+    kind: u32,
+    reason: u32,
+    seq: u64,
+    timestamp_ns: u64,
+    first: u64,
+    last: u64,
+    start_seq: u64,
+    next_seq: u64,
+    end_seq: u64,
+    has_end: u8,
+    terminal: u8,
+    retention_gap: u8,
+    reserved: u8,
+    payload: plsm_buf_t,
 }
 
 #[repr(C)]
@@ -177,12 +211,66 @@ unsafe extern "C" {
         out_err: *mut *mut plsm_error_t,
     ) -> c_int;
 
+    fn plsm_stream_next_wait(stream: *mut plsm_stream_t, timeout_ms: u64, out: *mut plsm_buf_t, err: *mut *mut plsm_error_t) -> c_int;
+    fn plsm_lite3_stream_next_wait(stream: *mut plsm_lite3_stream_t, timeout_ms: u64, out: *mut plsm_lite3_frame_t, err: *mut *mut plsm_error_t) -> c_int;
+    fn plsm_stream_cancel(stream: *mut plsm_stream_t);
+    fn plsm_lite3_stream_cancel(stream: *mut plsm_lite3_stream_t);
     fn plsm_stream_free(stream: *mut plsm_stream_t);
     fn plsm_lite3_stream_free(stream: *mut plsm_lite3_stream_t);
 
     fn plsm_buf_free(buf: *mut plsm_buf_t);
     fn plsm_lite3_frame_free(frame: *mut plsm_lite3_frame_t);
     fn plsm_error_free(err: *mut plsm_error_t);
+
+    fn plsm_udp_client_new(
+        endpoint: *const c_char,
+        out_client: *mut *mut plsm_udp_client_t,
+        out_err: *mut *mut plsm_error_t,
+    ) -> c_int;
+    fn plsm_udp_client_free(client: *mut plsm_udp_client_t);
+    fn plsm_udp_client_open_pool(
+        client: *mut plsm_udp_client_t,
+        pool_name: *const c_char,
+        out_pool: *mut *mut plsm_udp_pool_t,
+        out_err: *mut *mut plsm_error_t,
+    ) -> c_int;
+    fn plsm_udp_pool_free(pool: *mut plsm_udp_pool_t);
+    fn plsm_udp_pool_send_json(
+        pool: *mut plsm_udp_pool_t,
+        json_bytes: *const u8,
+        json_len: usize,
+        tags: *const *const c_char,
+        tags_len: usize,
+        out_err: *mut *mut plsm_error_t,
+    ) -> c_int;
+    fn plsm_udp_pool_send_lite3(
+        pool: *mut plsm_udp_pool_t,
+        payload: *const u8,
+        payload_len: usize,
+        out_err: *mut *mut plsm_error_t,
+    ) -> c_int;
+    fn plsm_udp_pool_follow(
+        pool: *mut plsm_udp_pool_t,
+        start_kind: u32,
+        start_value: u64,
+        live: u32,
+        out_follow: *mut *mut plsm_udp_follow_t,
+        out_err: *mut *mut plsm_error_t,
+    ) -> c_int;
+    fn plsm_udp_follow_next(
+        follow: *mut plsm_udp_follow_t,
+        timeout_ms: u64,
+        out_event: *mut plsm_udp_event_t,
+        out_err: *mut *mut plsm_error_t,
+    ) -> c_int;
+    fn plsm_udp_follow_cancel(follow: *mut plsm_udp_follow_t);
+    fn plsm_udp_follow_close(follow: *mut plsm_udp_follow_t);
+    fn plsm_udp_event_free(event: *mut plsm_udp_event_t);
+    fn plsm_udp_event_message(
+        event: *const plsm_udp_event_t,
+        out_message: *mut plsm_buf_t,
+        out_err: *mut *mut plsm_error_t,
+    ) -> c_int;
 }
 
 #[napi]
@@ -388,7 +476,12 @@ impl Pool {
         if rc != 0 {
             return Err(take_error(env, err)?);
         }
-        Ok(Stream { ptr: out })
+        Ok(Stream {
+            handle: Some(Arc::new(StreamHandle {
+                pointer: StreamPointer::Json(out),
+                reading: std::sync::atomic::AtomicBool::new(false),
+            })),
+        })
     }
 
     #[napi]
@@ -426,7 +519,12 @@ impl Pool {
         if rc != 0 {
             return Err(take_error(env, err)?);
         }
-        Ok(Lite3Stream { ptr: out })
+        Ok(Lite3Stream {
+            handle: Some(Arc::new(StreamHandle {
+                pointer: StreamPointer::Lite3(out),
+                reading: std::sync::atomic::AtomicBool::new(false),
+            })),
+        })
     }
 
     #[napi]
@@ -444,34 +542,138 @@ impl Drop for Pool {
     }
 }
 
+
+// C serializes reader state and accepts concurrent cancellation. Each task owns
+// an Arc, so closing a JS wrapper cancels work without freeing an active handle.
+#[derive(Clone, Copy)]
+enum StreamPointer {
+    Json(*mut plsm_stream_t),
+    Lite3(*mut plsm_lite3_stream_t),
+}
+
+struct StreamHandle {
+    pointer: StreamPointer,
+    reading: std::sync::atomic::AtomicBool,
+}
+
+// SAFETY: The C stream permits one reader plus concurrent cancel. ReadLease
+// enforces the reader rule; the final Arc frees the handle after active work.
+unsafe impl Send for StreamHandle {}
+unsafe impl Sync for StreamHandle {}
+
+impl StreamHandle {
+    fn cancel(&self) {
+        unsafe {
+            match self.pointer {
+                StreamPointer::Json(ptr) => plsm_stream_cancel(ptr),
+                StreamPointer::Lite3(ptr) => plsm_lite3_stream_cancel(ptr),
+            }
+        }
+    }
+}
+
+impl Drop for StreamHandle {
+    fn drop(&mut self) {
+        unsafe {
+            match self.pointer {
+                StreamPointer::Json(ptr) => plsm_stream_free(ptr),
+                StreamPointer::Lite3(ptr) => plsm_lite3_stream_free(ptr),
+            }
+        }
+    }
+}
+
+struct ReadLease {
+    handle: Arc<StreamHandle>,
+    active: bool,
+}
+impl ReadLease {
+    fn new(handle: &Option<Arc<StreamHandle>>) -> Result<Self> {
+        let handle = handle
+            .as_ref()
+            .ok_or_else(|| Error::new(Status::GenericFailure, "stream is closed"))?;
+        if handle
+            .reading
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(Error::new(
+                Status::GenericFailure,
+                "stream already has an active reader",
+            ));
+        }
+        Ok(Self {
+            handle: handle.clone(),
+            active: true,
+        })
+    }
+}
+impl ReadLease {
+    fn release(&mut self) {
+        if self.active {
+            self.handle
+                .reading
+                .store(false, std::sync::atomic::Ordering::Release);
+            self.active = false;
+        }
+    }
+}
+impl Drop for ReadLease {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 #[napi]
 pub struct Stream {
-    ptr: *mut plsm_stream_t,
+    handle: Option<Arc<StreamHandle>>,
 }
 
 #[napi]
 impl Stream {
     #[napi]
     pub fn next_json(&self, env: Env) -> Result<Option<Buffer>> {
-        let mut out = plsm_buf_t { data: ptr::null_mut(), len: 0 };
+        let read = ReadLease::new(&self.handle)?;
+        let StreamPointer::Json(ptr) = read.handle.pointer else {
+            unreachable!()
+        };
+        let mut out = plsm_buf_t {
+            data: ptr::null_mut(),
+            len: 0,
+        };
         let mut err = ptr::null_mut();
-        let rc = unsafe { plsm_stream_next(self.ptr, &mut out, &mut err) };
-        match rc {
+        match unsafe { plsm_stream_next(ptr, &mut out, &mut err) } {
             1 => Ok(Some(copy_and_free_buf(out))),
             0 => Ok(None),
             _ => Err(take_error(env, err)?),
         }
     }
 
+    #[napi(ts_return_type = "Promise<StreamWait>")]
+    pub fn next_json_wait(
+        &self,
+        timeout_ms: Either<u32, BigInt>,
+    ) -> Result<AsyncTask<StreamReadTask>> {
+        let timeout_ms = to_u64(timeout_ms, "timeout_ms")?;
+        Ok(AsyncTask::new(StreamReadTask {
+            read: ReadLease::new(&self.handle)?,
+            timeout_ms,
+        }))
+    }
+
+    #[napi]
+    pub fn cancel(&self) {
+        if let Some(handle) = &self.handle {
+            handle.cancel();
+        }
+    }
+
     #[napi]
     pub fn close(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe { plsm_stream_free(self.ptr) };
-            self.ptr = ptr::null_mut();
+        if let Some(handle) = self.handle.take() {
+            handle.cancel();
         }
     }
 }
-
 impl Drop for Stream {
     fn drop(&mut self) {
         self.close();
@@ -480,41 +682,543 @@ impl Drop for Stream {
 
 #[napi]
 pub struct Lite3Stream {
-    ptr: *mut plsm_lite3_stream_t,
+    handle: Option<Arc<StreamHandle>>,
 }
 
 #[napi]
 impl Lite3Stream {
     #[napi]
     pub fn next(&self, env: Env) -> Result<Option<Lite3Frame>> {
-        let mut out = plsm_lite3_frame_t {
-            seq: 0,
-            timestamp_ns: 0,
-            flags: 0,
-            payload: plsm_buf_t { data: ptr::null_mut(), len: 0 },
+        let read = ReadLease::new(&self.handle)?;
+        let StreamPointer::Lite3(ptr) = read.handle.pointer else {
+            unreachable!()
         };
+        let mut out = empty_lite3_frame();
         let mut err = ptr::null_mut();
-        let rc = unsafe { plsm_lite3_stream_next(self.ptr, &mut out, &mut err) };
-        match rc {
+        match unsafe { plsm_lite3_stream_next(ptr, &mut out, &mut err) } {
             1 => Ok(Some(copy_and_free_lite3_frame(out))),
             0 => Ok(None),
             _ => Err(take_error(env, err)?),
         }
     }
 
+    #[napi(ts_return_type = "Promise<StreamWait>")]
+    pub fn next_wait(&self, timeout_ms: Either<u32, BigInt>) -> Result<AsyncTask<StreamReadTask>> {
+        let timeout_ms = to_u64(timeout_ms, "timeout_ms")?;
+        Ok(AsyncTask::new(StreamReadTask {
+            read: ReadLease::new(&self.handle)?,
+            timeout_ms,
+        }))
+    }
+
+    #[napi]
+    pub fn cancel(&self) {
+        if let Some(handle) = &self.handle {
+            handle.cancel();
+        }
+    }
+
+    #[napi]
+    pub fn close(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.cancel();
+        }
+    }
+}
+impl Drop for Lite3Stream {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+fn empty_lite3_frame() -> plsm_lite3_frame_t {
+    plsm_lite3_frame_t {
+        seq: 0,
+        timestamp_ns: 0,
+        flags: 0,
+        payload: plsm_buf_t {
+            data: ptr::null_mut(),
+            len: 0,
+        },
+    }
+}
+
+#[napi(object)]
+pub struct StreamWait {
+    pub status: u32,
+    pub message: Option<Buffer>,
+    pub frame: Option<Lite3Frame>,
+}
+
+pub struct StreamReadTask {
+    read: ReadLease,
+    timeout_ms: u64,
+}
+
+pub struct StreamReadOutput {
+    status: i32,
+    bytes: Vec<u8>,
+    seq: u64,
+    timestamp_ns: u64,
+    flags: u32,
+    error: usize,
+}
+impl Drop for StreamReadOutput {
+    fn drop(&mut self) {
+        if self.error != 0 {
+            unsafe { plsm_error_free(self.error as *mut plsm_error_t) };
+        }
+    }
+}
+
+impl Task for StreamReadTask {
+    type Output = StreamReadOutput;
+    type JsValue = StreamWait;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let mut frame = empty_lite3_frame();
+        let mut err = ptr::null_mut();
+        let status = unsafe {
+            match self.read.handle.pointer {
+                StreamPointer::Json(ptr) => {
+                    plsm_stream_next_wait(ptr, self.timeout_ms, &mut frame.payload, &mut err)
+                }
+                StreamPointer::Lite3(ptr) => {
+                    plsm_lite3_stream_next_wait(ptr, self.timeout_ms, &mut frame, &mut err)
+                }
+            }
+        };
+        let bytes = if status == 1 {
+            unsafe { std::slice::from_raw_parts(frame.payload.data, frame.payload.len) }.to_vec()
+        } else {
+            Vec::new()
+        };
+        let output = StreamReadOutput {
+            status,
+            bytes,
+            seq: frame.seq,
+            timestamp_ns: frame.timestamp_ns,
+            flags: frame.flags,
+            error: err as usize,
+        };
+        unsafe { plsm_buf_free(&mut frame.payload) };
+        Ok(output)
+    }
+
+    fn resolve(&mut self, env: Env, mut output: Self::Output) -> Result<Self::JsValue> {
+        // The JS promise may immediately start the next read.
+        self.read.release();
+        if output.status < 0 {
+            let error = std::mem::replace(&mut output.error, 0);
+            return Err(take_error(env, error as *mut plsm_error_t)?);
+        }
+        let mut result = StreamWait {
+            status: output.status as u32,
+            message: None,
+            frame: None,
+        };
+        if output.status == 1 {
+            let payload = Buffer::from(std::mem::take(&mut output.bytes));
+            match self.read.handle.pointer {
+                StreamPointer::Json(_) => result.message = Some(payload),
+                StreamPointer::Lite3(_) => {
+                    result.frame = Some(Lite3Frame {
+                        seq: BigInt::from(output.seq),
+                        timestamp_ns: BigInt::from(output.timestamp_ns),
+                        flags: output.flags,
+                        payload,
+                    })
+                }
+            }
+        }
+        Ok(result)
+    }
+}
+
+#[napi]
+pub struct UdpClient {
+    ptr: *mut plsm_udp_client_t,
+}
+
+#[napi]
+impl UdpClient {
+    #[napi(constructor)]
+    pub fn new(env: Env, endpoint: String) -> Result<Self> {
+        let endpoint = CString::new(endpoint)
+            .map_err(|_| Error::new(Status::InvalidArg, "endpoint contains NUL"))?;
+        let mut out = ptr::null_mut();
+        let mut err = ptr::null_mut();
+        let rc = unsafe { plsm_udp_client_new(endpoint.as_ptr(), &mut out, &mut err) };
+        if rc != 0 {
+            return Err(take_error(env, err)?);
+        }
+        Ok(Self { ptr: out })
+    }
+
+    #[napi(js_name = "openPool")]
+    pub fn open_pool(&self, env: Env, pool_name: String) -> Result<UdpPool> {
+        let pool_name = CString::new(pool_name)
+            .map_err(|_| Error::new(Status::InvalidArg, "pool_name contains NUL"))?;
+        let mut out = ptr::null_mut();
+        let mut err = ptr::null_mut();
+        let rc = unsafe { plsm_udp_client_open_pool(self.ptr, pool_name.as_ptr(), &mut out, &mut err) };
+        if rc != 0 {
+            return Err(take_error(env, err)?);
+        }
+        Ok(UdpPool {
+            handle: Some(Arc::new(UdpPoolHandle { ptr: out })),
+        })
+    }
+
     #[napi]
     pub fn close(&mut self) {
         if !self.ptr.is_null() {
-            unsafe { plsm_lite3_stream_free(self.ptr) };
+            unsafe { plsm_udp_client_free(self.ptr) };
             self.ptr = ptr::null_mut();
         }
     }
 }
 
-impl Drop for Lite3Stream {
+impl Drop for UdpClient {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+#[napi]
+pub struct UdpPool {
+    handle: Option<Arc<UdpPoolHandle>>,
+}
+
+struct UdpPoolHandle {
+    ptr: *mut plsm_udp_pool_t,
+}
+
+// SAFETY: The C wrapper owns an immutable Rust UdpPool. Its send and follow
+// methods only use shared references, and the Arc keeps the C allocation alive
+// through worker tasks even if JavaScript closes or drops its pool wrapper.
+unsafe impl Send for UdpPoolHandle {}
+unsafe impl Sync for UdpPoolHandle {}
+
+impl Drop for UdpPoolHandle {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { plsm_udp_pool_free(self.ptr) };
+            self.ptr = ptr::null_mut();
+        }
+    }
+}
+
+impl UdpPool {
+    fn pool_ptr(&self) -> Result<*mut plsm_udp_pool_t> {
+        self.handle
+            .as_ref()
+            .map(|handle| handle.ptr)
+            .ok_or_else(|| Error::new(Status::GenericFailure, "UDP pool is closed"))
+    }
+}
+
+#[napi]
+impl UdpPool {
+    #[napi(js_name = "sendJson")]
+    pub fn send_json(&self, env: Env, payload: Buffer, tags: Vec<String>) -> Result<()> {
+        let pool = self.pool_ptr()?;
+        let c_tags = CStringArray::new(&tags)?;
+        let mut err = ptr::null_mut();
+        let rc = unsafe {
+            plsm_udp_pool_send_json(
+                pool,
+                payload.as_ptr(),
+                payload.len(),
+                c_tags.as_ptr(),
+                tags.len(),
+                &mut err,
+            )
+        };
+        if rc != 0 {
+            return Err(take_error(env, err)?);
+        }
+        Ok(())
+    }
+
+    #[napi(js_name = "sendLite3")]
+    pub fn send_lite3(&self, env: Env, payload: Buffer) -> Result<()> {
+        let pool = self.pool_ptr()?;
+        let mut err = ptr::null_mut();
+        let rc = unsafe {
+            plsm_udp_pool_send_lite3(pool, payload.as_ptr(), payload.len(), &mut err)
+        };
+        if rc != 0 {
+            return Err(take_error(env, err)?);
+        }
+        Ok(())
+    }
+
+    #[napi(ts_return_type = "Promise<UdpFollow>")]
+    pub fn follow(
+        &self,
+        start_kind: u32,
+        start_value: Either<u32, BigInt>,
+        live: bool,
+    ) -> Result<AsyncTask<UdpFollowTask>> {
+        let start_value = to_u64(start_value, "start_value")?;
+        Ok(AsyncTask::new(UdpFollowTask {
+            pool: self
+                .handle
+                .as_ref()
+                .ok_or_else(|| Error::new(Status::GenericFailure, "UDP pool is closed"))?
+                .clone(),
+            start_kind,
+            start_value,
+            live,
+        }))
+    }
+
+    #[napi]
+    pub fn close(&mut self) {
+        self.handle.take();
+    }
+}
+
+pub struct UdpFollowTask {
+    pool: Arc<UdpPoolHandle>,
+    start_kind: u32,
+    start_value: u64,
+    live: bool,
+}
+
+pub struct UdpFollowOpenResult {
+    status: c_int,
+    follow: usize,
+    error: usize,
+}
+
+impl Drop for UdpFollowOpenResult {
+    fn drop(&mut self) {
+        // Own worker results until resolve transfers them to a JavaScript handle.
+        // An abandoned task must release its subscription and error allocation.
+        if self.follow != 0 {
+            unsafe { plsm_udp_follow_close(self.follow as *mut plsm_udp_follow_t) };
+        }
+        if self.error != 0 {
+            unsafe { plsm_error_free(self.error as *mut plsm_error_t) };
+        }
+    }
+}
+
+impl Task for UdpFollowTask {
+    type Output = UdpFollowOpenResult;
+    type JsValue = UdpFollow;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let mut follow = ptr::null_mut();
+        let mut err = ptr::null_mut();
+        let status = unsafe {
+            plsm_udp_pool_follow(
+                self.pool.ptr,
+                self.start_kind,
+                self.start_value,
+                u32::from(self.live),
+                &mut follow,
+                &mut err,
+            )
+        };
+        Ok(UdpFollowOpenResult {
+            status,
+            follow: follow as usize,
+            error: err as usize,
+        })
+    }
+
+    fn resolve(&mut self, env: Env, mut output: Self::Output) -> Result<Self::JsValue> {
+        if output.status != 0 {
+            let error = std::mem::replace(&mut output.error, 0);
+            return Err(take_error(env, error as *mut plsm_error_t)?);
+        }
+        let follow = std::mem::replace(&mut output.follow, 0);
+        Ok(UdpFollow {
+            ptr: follow as *mut plsm_udp_follow_t,
+            finished: false,
+        })
+    }
+}
+
+impl Drop for UdpPool {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+#[napi(object)]
+pub struct UdpEvent {
+    pub kind: String,
+    pub seq: Option<BigInt>,
+    #[napi(js_name = "timestampNs")]
+    pub timestamp_ns: Option<BigInt>,
+    pub payload: Option<Buffer>,
+    pub message: Option<Buffer>,
+    pub first: Option<BigInt>,
+    pub last: Option<BigInt>,
+    pub reason: Option<String>,
+    #[napi(js_name = "startSeq")]
+    pub start_seq: Option<BigInt>,
+    #[napi(js_name = "nextSeq")]
+    pub next_seq: Option<BigInt>,
+    #[napi(js_name = "endSeq")]
+    pub end_seq: Option<BigInt>,
+    pub terminal: Option<bool>,
+    #[napi(js_name = "retentionGap")]
+    pub retention_gap: Option<bool>,
+}
+
+#[napi(object)]
+pub struct UdpWait {
+    /// 0=timeout, 1=event, 2=finished, 3=cancelled.
+    pub status: u32,
+    pub event: Option<UdpEvent>,
+}
+
+#[napi]
+pub struct UdpFollow {
+    ptr: *mut plsm_udp_follow_t,
+    finished: bool,
+}
+
+#[napi]
+impl UdpFollow {
+    #[napi(js_name = "nextEvent")]
+    pub fn next_event(&mut self, env: Env, timeout_ms: Either<u32, BigInt>) -> Result<UdpWait> {
+        if self.ptr.is_null() || self.finished {
+            return Ok(UdpWait { status: 2, event: None });
+        }
+        let timeout_ms = to_u64(timeout_ms, "timeout_ms")?;
+        let mut event = plsm_udp_event_t {
+            kind: 0,
+            reason: 0,
+            seq: 0,
+            timestamp_ns: 0,
+            first: 0,
+            last: 0,
+            start_seq: 0,
+            next_seq: 0,
+            end_seq: 0,
+            has_end: 0,
+            terminal: 0,
+            retention_gap: 0,
+            reserved: 0,
+            payload: plsm_buf_t { data: ptr::null_mut(), len: 0 },
+        };
+        let mut err = ptr::null_mut();
+        let rc = unsafe { plsm_udp_follow_next(self.ptr, timeout_ms, &mut event, &mut err) };
+        match rc {
+            0 => Ok(UdpWait { status: 0, event: None }),
+            1 => {
+                let parsed = udp_event_from_native(env, &mut event);
+                unsafe { plsm_udp_event_free(&mut event) };
+                Ok(UdpWait {
+                    status: 1,
+                    event: Some(parsed?),
+                })
+            }
+            2 => {
+                self.finished = true;
+                Ok(UdpWait { status: 2, event: None })
+            }
+            3 => {
+                self.finished = true;
+                Ok(UdpWait { status: 3, event: None })
+            }
+            _ => Err(take_error(env, err)?),
+        }
+    }
+
+    #[napi(getter, js_name = "isFinished")]
+    pub fn is_finished(&self) -> bool {
+        self.finished || self.ptr.is_null()
+    }
+
+    #[napi]
+    pub fn cancel(&self) {
+        if !self.ptr.is_null() {
+            unsafe { plsm_udp_follow_cancel(self.ptr) };
+        }
+    }
+
+    #[napi]
+    pub fn close(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { plsm_udp_follow_close(self.ptr) };
+            self.ptr = ptr::null_mut();
+            self.finished = true;
+        }
+    }
+}
+
+impl Drop for UdpFollow {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+fn udp_event_from_native(env: Env, event: &mut plsm_udp_event_t) -> Result<UdpEvent> {
+    let mut parsed = UdpEvent {
+        kind: String::new(),
+        seq: None,
+        timestamp_ns: None,
+        payload: None,
+        message: None,
+        first: None,
+        last: None,
+        reason: None,
+        start_seq: None,
+        next_seq: None,
+        end_seq: None,
+        terminal: None,
+        retention_gap: None,
+    };
+    match event.kind {
+        1 => {
+            parsed.kind = "frame".to_string();
+            parsed.seq = Some(BigInt::from(event.seq));
+            parsed.timestamp_ns = Some(BigInt::from(event.timestamp_ns));
+            parsed.payload = Some(Buffer::from(copy_buf_bytes(&event.payload)));
+            let mut message = plsm_buf_t { data: ptr::null_mut(), len: 0 };
+            let mut err = ptr::null_mut();
+            let rc = unsafe { plsm_udp_event_message(event, &mut message, &mut err) };
+            if rc != 0 {
+                return Err(take_error(env, err)?);
+            }
+            parsed.message = Some(copy_and_free_buf(message));
+        }
+        2 => {
+            parsed.kind = "gap".to_string();
+            parsed.first = Some(BigInt::from(event.first));
+            parsed.last = Some(BigInt::from(event.last));
+            parsed.reason = Some(match event.reason {
+                1 => "oversized",
+                2 => "retention",
+                3 => "pressure",
+                _ => "unknown",
+            }.to_string());
+        }
+        3 => {
+            parsed.kind = "progress".to_string();
+            parsed.start_seq = Some(BigInt::from(event.start_seq));
+            parsed.next_seq = Some(BigInt::from(event.next_seq));
+            parsed.end_seq = (event.has_end != 0).then(|| BigInt::from(event.end_seq));
+            parsed.terminal = Some(event.terminal != 0);
+            parsed.retention_gap = Some(event.retention_gap != 0);
+        }
+        _ => return Err(Error::new(Status::GenericFailure, "unknown UDP event kind")),
+    }
+    Ok(parsed)
+}
+
+fn copy_buf_bytes(buf: &plsm_buf_t) -> Vec<u8> {
+    if buf.data.is_null() || buf.len == 0 {
+        return Vec::new();
+    }
+    unsafe { std::slice::from_raw_parts(buf.data, buf.len) }.to_vec()
 }
 
 struct CStringArray {

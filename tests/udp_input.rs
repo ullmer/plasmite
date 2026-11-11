@@ -1,7 +1,5 @@
 //! Real-process UDP input checks using loopback sockets and ordinary pool readers.
 
-#[cfg(unix)]
-use fs2::FileExt;
 use plasmite::api::{Pool, PoolApiExt};
 use serde_json::{Value, json};
 use std::fs;
@@ -153,12 +151,11 @@ impl UdpServer {
     fn wait_for_udp_banner(&mut self, timeout: Duration) -> TestResult<SocketAddr> {
         let deadline = Instant::now() + timeout;
         loop {
-            if let Some(line) = self.receive_until(deadline)? {
-                if line.stream == OutputStream::Stderr
-                    && let Some(address) = parse_udp_banner(&line.text)
-                {
-                    return Ok(address);
-                }
+            if let Some(line) = self.receive_until(deadline)?
+                && line.stream == OutputStream::Stderr
+                && let Some(address) = parse_udp_banner(&line.text)
+            {
+                return Ok(address);
             }
             self.ensure_running("UDP startup banner")?;
         }
@@ -410,7 +407,6 @@ fn cli_lite3_fixture(home: &TestHome, pool_dir: &Path) -> TestResult<Vec<u8>> {
         .args([
             "feed",
             "lite3-source",
-            "--data",
             r#"{"fixture":"udp","sample":41}"#,
             "--tag",
             "fixture",
@@ -833,7 +829,7 @@ fn occupied_udp_socket_fails_startup_before_banner_or_readiness() -> TestResult<
 
 #[cfg(unix)]
 #[test]
-fn shutdown_waits_for_an_in_progress_pool_lock_and_does_not_drain_queued_packets() -> TestResult<()>
+fn shutdown_waits_for_an_in_progress_pool_lock_and_does_not_append_queued_packets() -> TestResult<()>
 {
     let home = TestHome::new()?;
     for name in ["locked", "queued"] {
@@ -856,7 +852,7 @@ fn shutdown_waits_for_an_in_progress_pool_lock_and_does_not_drain_queued_packets
         .read(true)
         .write(true)
         .open(&locked_path)?;
-    lock_file.lock_exclusive()?;
+    lock_file.lock()?;
     send(
         &socket,
         address,
@@ -878,7 +874,7 @@ fn shutdown_waits_for_an_in_progress_pool_lock_and_does_not_drain_queued_packets
         "server exited before the held pool lock was released"
     );
 
-    fs2::FileExt::unlock(&lock_file)?;
+    lock_file.unlock()?;
     wait_for_sequence(&locked_path, 1, Duration::from_secs(3))?;
     server.wait_for_exit(Duration::from_secs(5))?;
     assert_eq!(message(&locked_path, 1)?.data["lock_holder"], true);
@@ -889,7 +885,12 @@ fn shutdown_waits_for_an_in_progress_pool_lock_and_does_not_drain_queued_packets
         .find(|line| line.contains("UDP input summary"))
         .ok_or_else(|| format!("missing shutdown UDP summary:\n{}", server.combined_log))?;
     assert_eq!(log_counter(summary, "appended"), Some(2), "{summary}");
-    assert_eq!(log_counter(summary, "received"), Some(2), "{summary}");
+    // Reception now runs independently of a blocked append. Queued reception
+    // may increase received, but shutdown must not commit that queued message.
+    assert!(
+        log_counter(summary, "received").unwrap_or_default() >= 2,
+        "{summary}"
+    );
     Ok(())
 }
 

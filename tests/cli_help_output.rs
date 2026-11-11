@@ -110,7 +110,7 @@ fn short_help_exposes_material_command_constraints() {
         (
             &["feed", "-h"],
             &[
-                "requires --create",
+                "creates if missing",
                 "requires --retry > 0",
                 "Choose one input source",
                 "Invalid input stops immediately",
@@ -121,7 +121,7 @@ fn short_help_exposes_material_command_constraints() {
             &[
                 "finite SPEED >= 0",
                 "requires --tail or --since",
-                "Remote refs reject --create",
+                "HTTP(S) refs reject --create",
                 "Exit 124",
             ],
         ),
@@ -129,16 +129,16 @@ fn short_help_exposes_material_command_constraints() {
             &["tap", "-h"],
             &[
                 "<POOL> -- <COMMAND>...",
-                "requires --create",
+                "creates if missing",
                 "wrapped command's exit status",
             ],
         ),
         (
             &["duplex", "-h"],
             &[
-                "Terminal input creates chat messages and requires --me",
-                "stdin EOF ends the session",
-                "copy a finite stream",
+                "JSON, marked YAML, and framed Lite3 use the same rules as feed.",
+                "Input EOF closes sending while reception continues.",
+                "including your own appends",
             ],
         ),
         (
@@ -147,7 +147,13 @@ fn short_help_exposes_material_command_constraints() {
         ),
         (
             &["serve", "install", "-h"],
-            &["--no-udp", "Remove UDP input", "--udp[=<ADDRESS>]"],
+            &[
+                "--no-udp",
+                "Remove UDP input",
+                "--udp[=<ADDRESS>]",
+                "--udp-follow",
+                "--no-udp-follow",
+            ],
         ),
         (
             &["serve", "-h"],
@@ -156,6 +162,7 @@ fn short_help_exposes_material_command_constraints() {
                 "must be positive",
                 "remote clients use HTTPS",
                 "--udp[=<ADDRESS>]",
+                "--udp-follow",
                 "max 65507 bytes including routing",
                 "lose, duplicate, or reorder",
             ],
@@ -279,7 +286,7 @@ fn not_found_exit_code() {
 }
 
 #[test]
-fn usage_exit_code_for_tag_without_data() {
+fn usage_exit_code_for_tag_on_complete_message() {
     let temp = tempfile::tempdir().expect("tempdir");
     let pool_dir = temp.path().join("pools");
 
@@ -303,7 +310,7 @@ fn usage_exit_code_for_tag_without_data() {
             "testpool",
             "--tag",
             "orphan",
-            "{\"x\":1}",
+            r#"{"seq":7,"time":"2000-01-01T00:00:00Z","meta":{"tags":[]},"data":{"x":1}}"#,
             "--format",
             "json",
         ])
@@ -415,7 +422,6 @@ fn color_always_does_not_color_json() {
             pool_dir.to_str().unwrap(),
             "feed",
             "demo",
-            "--data",
             "{\"x\":1}",
         ])
         .output()
@@ -492,7 +498,7 @@ fn errors_are_json_when_explicitly_requested() {
             .ends_with("missing.plasmite")
     );
     let hint = inner.get("hint").and_then(|v| v.as_str()).unwrap_or("");
-    assert!(hint.contains("--create") || hint.contains("exact command"));
+    assert!(hint.contains("--create"));
 }
 
 #[test]

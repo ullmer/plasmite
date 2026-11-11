@@ -6,6 +6,7 @@ Normative behavior lives in:
 - `spec/v0/SPEC.md` (CLI contract)
 - `spec/api/v0/SPEC.md` (public API)
 - `spec/remote/v0/SPEC.md` (HTTP protocol)
+- `spec/udp/v1/SPEC.md` (UDP subscriptions and delivery)
 
 ## Design principles
 
@@ -29,7 +30,9 @@ Interface layer  →  Core domain layer  →  Platform layer
 - Must: parse and validate inputs, invoke core operations, map results to user-facing formats.
 - Must not: duplicate storage correctness logic across multiple interface surfaces.
 - Allowed exception: one shared validation-report implementation may perform read-only ring/frame checks when exposed through API/CLI diagnostics.
-- Must not: hold pool state across requests beyond what `Pool` and `Cursor` already encapsulate.
+- May retain bounded subscription state for documented selection, routing,
+  leases, cancellation, and finite completion. Readers own durable progress.
+- Must release pool mappings and cursors when data delivery ends.
 
 **Core domain layer** (`src/core/*`):
 - Must: own all append/get/tail semantics, validation, sequencing, and corruption detection.
@@ -165,7 +168,7 @@ payload bytes, so retaining a frame cannot observe a later overwrite. Internal
 frame views remain inside the lock lifetime; scans do not copy skipped
 payloads. Corrupt stable frames return `Corrupt` rather than retrying forever.
 
-Tail path:
+Core tail path (network adapters apply their own delivery contracts):
 
 1. Resolve start position (`tail`, `since`, `from`).
 2. Stream committed messages in order.
@@ -173,7 +176,15 @@ Tail path:
 
 Invariant: Correctness of the tail path must not depend on notify delivery. Notify is a latency optimization; a tail that never receives a notification must still eventually return all committed messages. Removing notify must not cause failures in non-timing tests.
 
-The CLI's interactive `follow` loop and the public API's `Tail` and `Replay`
+Rust and C tails share private reader state with an explicit pool input. Rust
+tails borrow their pool; C streams own an independently opened pool. Encoding
+adapters select decoded messages or raw frames. A bounded wait can expire without
+ending the reader or losing its sequence checkpoint. C streams serialize reader
+state and expose a separate atomic cancellation signal; callers retain handles
+until active reads finish. Node workers hold shared ownership through an active
+read, so closing a JavaScript wrapper cancels without freeing a worker's handle.
+
+The CLI's interactive `follow` loop and the public API's `Tail`
 share `Pool` and `Cursor`, but have different contracts. CLI follow selects
 retained `--tail` history before filtering, resets its timeout after output,
 and reports dropped messages. Finite CLI follow and replay stop at the initial
@@ -181,7 +192,12 @@ sequence boundary and hold only one owned message at a time. Remote history
 uses the existing bounds and tail protocol. API tails use sequence checkpoints,
 an absolute timeout, and an optional retention-gap error. Keep those policies at their interface
 boundaries; sharing a loop would make either interface inherit the other's
-behavior. Extract a rule only when both interfaces require the same result.
+behavior. Extract a rule only when both interfaces require the same result. Timed playback
+belongs to CLI follow; SDK callers use ordinary streams and control their own
+scheduling. Duplex uses the same input parser for terminals and pipes. It starts
+sending after the receiver chooses its initial position; successful input EOF
+closes sending while reception continues. It assigns no meaning to application
+fields.
 
 ## Transport architecture
 
@@ -190,13 +206,31 @@ Plasmite is transport-agnostic at the core.
 - Local mode: CLI/API calls directly into core operations.
 - Remote pool control: `plasmite serve` adapts HTTP and HTTPS requests into
   the same core calls.
-- Optional UDP input: the same server routes a datagram's pool name, decodes
-  one JSON or Lite3 message, and calls the existing append operation. It adds
-  append input only; authenticated remote pool control remains on HTTPS.
+- Optional UDP: the same server routes input to the existing append operation.
+  With `--udp-follow`, bounded workers read through core cursors and send
+  sequence, timestamp, and original Lite3 bytes to subscribers. A cookie proves
+  return reachability before a worker opens a pool. Active workers hold their
+  opened pool and cursor. A finite worker returns after terminal progress and
+  releases its mapping. The receive loop keeps a bounded completion record,
+  a file identity guard, and the existing lease. Short jobs check
+  identity and answer renewals without blocking the receive loop. Close or
+  expiry removes the record; idle completed reads keep no worker or polling loop.
+  The [receive policy](../../spec/udp/v1/SPEC.md#receive-ordering-and-notices)
+  requires arrival-order delivery of valid matching messages, including late
+  messages and duplicates; consumers choose whether to reorder or discard them.
+  Only explicit server skips produce gap reports; DATA/progress sequence jumps
+  never suppress a message or establish loss. Opening and normal reception share
+  packet validation and event handling; their wait and retry rules stay separate.
+  The client performs no data repair. Public `Gap`/`udp-gap` names describe server
+  skips for compatibility; the reserved `Unknown` value is not a wire skip reason.
+  Standalone UDP APIs return local send success; HTTP append still returns a
+  committed receipt. The private wire codec serves the CLI/server and library.
 - Process capture mode (`plasmite tap`): CLI spawns a child process, reads stdout/stderr on separate threads, and appends line messages through the same local append path as `feed`.
 - Future transports must be adapters over the existing core, not alternate correctness engines.
 
-Invariant: Adding a new transport must not require changes to `src/core`. If a proposed transport requires core changes to function correctly, the design is wrong.
+Adapters use the core's storage rules. Keep network operations and delivery
+policy outside `src/core`. Core helpers such as the read-only native file
+identity check apply to every adapter; they carry no transport-specific state.
 
 The HTTP adapter runs synchronous pool operations on Tokio's blocking worker
 pool. A semaphore admits at most `--max-tail-concurrency` ordinary storage

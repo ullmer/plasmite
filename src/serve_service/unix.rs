@@ -5,7 +5,6 @@ use crate::access_store::{create_private_dir, ensure_private, read_json, write_a
 use crate::cli::args::ServeRunArgs;
 use crate::cli::output::{OutputMode, render_output};
 use crate::serve_registry::{self, ServerDetails};
-use fs2::FileExt;
 use plasmite::api::{Error, ErrorKind};
 use std::fs::{self, File, OpenOptions};
 use std::net::{SocketAddr, TcpListener, UdpSocket};
@@ -95,7 +94,7 @@ impl Drop for ServiceLock {
     fn drop(&mut self) {
         // A concurrently forked child can inherit this descriptor until exec.
         // Unlock the shared description now rather than awaiting its last close.
-        let _ = FileExt::unlock(&self.0);
+        let _ = self.0.unlock();
     }
 }
 
@@ -117,7 +116,7 @@ fn pool_operation_lock(pool_dir: &Path) -> Result<ServiceLock, Error> {
         .open(&path)
         .map_err(|error| io_error("failed to open service lock", &path, error))?;
     ensure_private(&path)?;
-    file.try_lock_exclusive().map_err(|error| {
+    file.try_lock().map_err(|error| {
         Error::new(ErrorKind::Busy)
             .with_message("another command is changing this service")
             .with_path(&path)
@@ -772,6 +771,7 @@ pub(crate) fn install(
     pool_dir: &Path,
     options: &ServeRunArgs,
     no_udp: bool,
+    no_udp_follow: bool,
 ) -> Result<Status, Error> {
     supported()?;
     if unsafe_euid_is_root() {
@@ -822,7 +822,7 @@ pub(crate) fn install(
         pool_dir,
         account,
         home: owner_home,
-        run: merge(previous.as_ref(), options, no_udp)?,
+        run: merge(previous.as_ref(), options, no_udp, no_udp_follow)?,
     };
     let owners = previous.iter().collect::<Vec<_>>();
     verify_native_ownership(&setup, &owners)?;
@@ -1523,12 +1523,12 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let raw_path = temp.path().join("close-only.lock");
         let raw = File::create(&raw_path).unwrap();
-        raw.try_lock_exclusive().unwrap();
+        raw.try_lock().unwrap();
         let raw_inherited = raw.try_clone().unwrap();
         drop(raw);
         let contender = File::open(raw_path).unwrap();
         assert!(
-            contender.try_lock_exclusive().is_err(),
+            contender.try_lock().is_err(),
             "closing only the parent descriptor leaves the duplicated lease held"
         );
         drop(raw_inherited);
@@ -1536,18 +1536,15 @@ mod tests {
         // releases that inherited copy on exec, so allow that brief delay here.
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            match contender.try_lock_exclusive() {
+            match contender.try_lock() {
                 Ok(()) => break,
-                Err(error)
-                    if error.kind() == std::io::ErrorKind::WouldBlock
-                        && Instant::now() < deadline =>
-                {
+                Err(std::fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(1));
                 }
                 Err(error) => panic!("raw lock remained held after close: {error}"),
             }
         }
-        FileExt::unlock(&contender).unwrap();
+        contender.unlock().unwrap();
 
         let lease = pool_operation_lock(temp.path()).unwrap();
         // dup shares the same open-file description as a descriptor inherited
@@ -2066,6 +2063,7 @@ mod tests {
                 ..Default::default()
             },
             false,
+            false,
         )
         .unwrap();
         assert_eq!(run.remote_bind, setup.run.remote_bind);
@@ -2075,11 +2073,62 @@ mod tests {
         let mut setup = setup();
         setup.run.bind = Some("127.0.0.1:12345".into());
         assert_eq!(
-            merge(Some(&setup), &ServeRunArgs::default(), false)
+            merge(Some(&setup), &ServeRunArgs::default(), false, false)
                 .unwrap()
                 .bind,
             setup.run.bind
         );
+    }
+    #[test]
+    fn udp_follow_install_merge_preserves_opt_in_and_allows_removal() {
+        let mut setup = setup();
+        setup.run.udp = Some("127.0.0.1:9701".into());
+        assert_eq!(
+            merge(Some(&setup), &ServeRunArgs::default(), false, false)
+                .unwrap()
+                .udp_follow,
+            None
+        );
+        let enabled = merge(
+            Some(&setup),
+            &ServeRunArgs {
+                udp_follow: Some(true),
+                ..Default::default()
+            },
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(enabled.udp_follow, Some(true));
+        setup.run = enabled;
+        let disabled = merge(Some(&setup), &ServeRunArgs::default(), false, true).unwrap();
+        assert_eq!(disabled.udp_follow, Some(false));
+        assert_eq!(disabled.udp.as_deref(), Some("127.0.0.1:9701"));
+        let removed = merge(Some(&setup), &ServeRunArgs::default(), true, false).unwrap();
+        assert_eq!(removed.udp_follow, Some(false));
+        assert_eq!(removed.udp, None);
+        assert!(
+            merge(
+                None,
+                &ServeRunArgs {
+                    udp_follow: Some(true),
+                    ..Default::default()
+                },
+                true,
+                false
+            )
+            .is_err()
+        );
+    }
+    #[test]
+    fn udp_follow_alone_uses_default_udp_bind() {
+        let run = effective_args(&ServeRunArgs {
+            udp_follow: Some(true),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(run.udp.as_deref(), Some("127.0.0.1:9701"));
+        assert_eq!(run.udp_follow, Some(true));
     }
     #[test]
     fn duplicate_fixed_listeners_fail_before_identity_mutation() {

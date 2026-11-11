@@ -1,10 +1,38 @@
 //! Purpose: Define the canonical serialized data shared by interface adapters.
-//! Exports: Internal message, pool-info, bounds, metrics, and error wire types.
+//! Exports: Internal message, Lite3 header, pool-info, bounds, metrics, and error wire types.
 //! Role: Single source of truth for stable v0 field names and omission rules.
 //! Invariants: This module contains representation only, not transport policy.
 
+use crate::{Error, ErrorKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub(crate) const LITE3_FRAME_HEADER_LEN: usize = 20;
+
+pub(crate) struct Lite3FrameHeader {
+    pub(crate) seq: u64,
+    pub(crate) timestamp_ns: u64,
+    pub(crate) payload_len: u32,
+}
+
+impl Lite3FrameHeader {
+    #[allow(dead_code, reason = "Only the CLI binary writes Lite3 stream headers.")]
+    pub(crate) fn encode(self) -> [u8; LITE3_FRAME_HEADER_LEN] {
+        let mut bytes = [0; LITE3_FRAME_HEADER_LEN];
+        bytes[..8].copy_from_slice(&self.seq.to_be_bytes());
+        bytes[8..16].copy_from_slice(&self.timestamp_ns.to_be_bytes());
+        bytes[16..].copy_from_slice(&self.payload_len.to_be_bytes());
+        bytes
+    }
+
+    pub(crate) fn decode(bytes: [u8; LITE3_FRAME_HEADER_LEN]) -> Self {
+        Self {
+            seq: u64::from_be_bytes(bytes[..8].try_into().expect("sequence field")),
+            timestamp_ns: u64::from_be_bytes(bytes[8..16].try_into().expect("timestamp field")),
+            payload_len: u32::from_be_bytes(bytes[16..].try_into().expect("length field")),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MessageWire {
@@ -27,6 +55,19 @@ impl MessageWire {
             meta: MessageMetaWire { tags },
             data,
         }
+    }
+
+    /// Move the existing data tree into the JSON envelope.
+    pub(crate) fn into_json(self) -> Value {
+        Value::from_iter([
+            ("seq", self.seq.into()),
+            ("time", self.time.into()),
+            (
+                "meta",
+                Value::from_iter([("tags", Value::from(self.meta.tags))]),
+            ),
+            ("data", self.data),
+        ])
     }
 }
 
@@ -135,6 +176,70 @@ pub(crate) enum ErrorKindWire {
     RetentionGap,
 }
 
+#[derive(Deserialize)]
+pub(crate) struct HttpErrorEnvelope {
+    pub(crate) error: HttpErrorWire,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct HttpErrorWire {
+    kind: String,
+    message: Option<String>,
+    hint: Option<String>,
+    path: Option<String>,
+    seq: Option<u64>,
+    offset: Option<u64>,
+}
+
+impl HttpErrorWire {
+    pub(crate) fn kind(&self) -> Option<ErrorKind> {
+        Some(match self.kind.as_str() {
+            "Internal" => ErrorKind::Internal,
+            "Usage" => ErrorKind::Usage,
+            "NotFound" => ErrorKind::NotFound,
+            "AlreadyExists" => ErrorKind::AlreadyExists,
+            "Busy" => ErrorKind::Busy,
+            "Permission" => ErrorKind::Permission,
+            "Corrupt" => ErrorKind::Corrupt,
+            "Io" => ErrorKind::Io,
+            "RetentionGap" => ErrorKind::RetentionGap,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn into_error(self, kind: ErrorKind) -> Error {
+        let mut error = Error::new(kind);
+        if let Some(message) = self.message {
+            error = error.with_message(message);
+        }
+        if let Some(hint) = self.hint {
+            error = error.with_hint(hint);
+        }
+        if let Some(path) = self.path {
+            error = error.with_path(path);
+        }
+        if let Some(seq) = self.seq {
+            error = error.with_seq(seq);
+        }
+        if let Some(offset) = self.offset {
+            error = error.with_offset(offset);
+        }
+        error
+    }
+}
+
+pub(crate) fn error_kind_from_status(status: u16) -> ErrorKind {
+    match status {
+        400 | 413 => ErrorKind::Usage,
+        401 | 403 => ErrorKind::Permission,
+        404 => ErrorKind::NotFound,
+        409 => ErrorKind::AlreadyExists,
+        423 => ErrorKind::Busy,
+        500..=599 => ErrorKind::Internal,
+        _ => ErrorKind::Io,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ErrorPolicy {
     pub(crate) cli_message: &'static str,
@@ -202,27 +307,11 @@ pub(crate) const fn error_policy(kind: ErrorKindWire) -> ErrorPolicy {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ErrorContextWire {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) message: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) hint: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) seq: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) offset: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) causes: Vec<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundsWire, ErrorContextWire, ErrorKindWire, MessageMetaWire, MessageWire, PoolAgeWire,
-        PoolInfoWire, PoolMetricsWire, PoolUtilizationWire, error_policy,
+        BoundsWire, ErrorKindWire, MessageMetaWire, MessageWire, PoolAgeWire, PoolInfoWire,
+        PoolMetricsWire, PoolUtilizationWire, error_policy,
     };
     use serde_json::json;
 
@@ -237,15 +326,17 @@ mod tests {
             data: json!({"ok": true}),
         };
 
+        let expected = json!({
+            "seq": 7,
+            "time": "2026-07-28T12:00:00Z",
+            "meta": {"tags": ["build", "green"]},
+            "data": {"ok": true}
+        });
         assert_eq!(
-            serde_json::to_value(wire).expect("serialize message"),
-            json!({
-                "seq": 7,
-                "time": "2026-07-28T12:00:00Z",
-                "meta": {"tags": ["build", "green"]},
-                "data": {"ok": true}
-            })
+            serde_json::to_value(&wire).expect("serialize message"),
+            expected
         );
+        assert_eq!(wire.into_json(), expected);
     }
 
     #[test]
@@ -389,18 +480,5 @@ mod tests {
             assert_eq!(policy.http_status, http_status);
             assert_eq!(policy.mcp_error_kind, mcp_error_kind);
         }
-    }
-
-    #[test]
-    fn error_context_omits_absent_facts() {
-        let context = ErrorContextWire {
-            seq: Some(9),
-            ..ErrorContextWire::default()
-        };
-
-        assert_eq!(
-            serde_json::to_value(context).expect("serialize error context"),
-            json!({"seq": 9})
-        );
     }
 }

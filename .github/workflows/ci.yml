@@ -130,11 +130,10 @@ jobs:
               - 'vendor/lite3/**'
               - 'include/**'
               - 'bindings/**'
-              - 'conformance/**'
               - 'tests/abi_adversarial.c'
               - 'scripts/abi_smoke.sh'
               - 'scripts/abi_adversarial.sh'
-              - 'scripts/conformance_all.sh'
+              - 'scripts/cross_artifact_smoke.sh'
               - 'scripts/node_pack_smoke.sh'
               - 'scripts/node_remote_only_smoke.sh'
               - 'Justfile'
@@ -162,7 +161,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
           - os: macos-15-intel
             target: x86_64-apple-darwin
@@ -188,6 +187,9 @@ jobs:
           cache-dependency-glob: bindings/python/pyproject.toml
           cache-local-path: ${{ runner.temp }}/uv-cache
           cache-suffix: ${{ matrix.target }}
+      - name: Check release publication portability
+        shell: bash
+        run: bash scripts/test_homebrew_publication.sh
       - run: cd bindings/node && npm ci
       - name: Build SDK artifacts for packaging smoke
         shell: bash
@@ -202,7 +204,13 @@ jobs:
         env:
           PLASMITE_SDK_DIR: ${{ github.workspace }}/target/${{ matrix.target }}/release
           UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
-        run: ./scripts/python_wheel_smoke.sh
+        shell: bash
+        run: |
+          if [[ '${{ matrix.target }}' == x86_64-unknown-linux-gnu ]]; then
+            test "$(getconf GNU_LIBC_VERSION)" = 'glibc 2.35'
+            export PLASMITE_MANYLINUX_PLATFORM=manylinux_2_35_x86_64
+          fi
+          ./scripts/python_wheel_smoke.sh
 
   arm-sdk-smoke:
     needs: [pr-paths]
@@ -225,7 +233,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.99.1
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       - name: Install SDK smoke tools
@@ -273,6 +281,10 @@ jobs:
             --test oauth_access \
             --test access_lifecycle \
             --test remote_integration \
+            --test udp_input \
+            --test udp_client \
+            --test udp_transport \
+            --test udp_transport_cli \
             -- --test-threads=1
       - name: Check shared pools across 64-bit and ARMv7 CLIs
         if: matrix.target == 'armv7-unknown-linux-gnueabihf'
@@ -322,8 +334,8 @@ jobs:
         with:
           tool: just
       - run: cd bindings/node && npm ci
-      - name: Run ABI, conformance, and binding contracts
-        run: just abi-smoke conformance-all bindings-test
+      - name: Run ABI, binding, and cross-artifact checks
+        run: just abi-smoke bindings-test cross-artifact-smoke
 
   windows-smoke:
     needs: [pr-paths]
@@ -336,17 +348,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v5
       - name: Lint Windows targets
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           $PSNativeCommandUseErrorActionPreference = $true
           cargo clippy --release --all-targets -- -D warnings
-      - name: Build release binaries
+      - name: Build release binaries and library
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          cargo build --release --bins
+          cargo build --release
       - name: Smoke CLI version
         shell: pwsh
         run: |
@@ -359,7 +375,7 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           cargo test --release --lib windows_private::tests -- --test-threads=1
           cargo test --release --bin plasmite serve_service::windows::tests -- --test-threads=1
-          cargo test --release --test secure_sharing --test access_lifecycle --test browser_access --test oauth_access --test udp_input --test cli_yaml --test cli_yaml_stream -- --test-threads=1
+          cargo test --release --test secure_sharing --test access_lifecycle --test browser_access --test oauth_access --test udp_input --test udp_client --test udp_transport --test udp_transport_cli --test cli_yaml --test cli_yaml_stream -- --test-threads=1
       - name: Local pool roundtrip smoke
         shell: pwsh
         run: |
@@ -374,7 +390,7 @@ jobs:
           Set-Content -Path $payloadPath -Value '{"ci":"windows-smoke"}' -NoNewline
           try {
             & $exe --dir $dir pool create $pool
-            & $exe --dir $dir feed $pool --data -f $payloadPath
+            & $exe --dir $dir feed $pool -f $payloadPath
             $out = & $exe --dir $dir follow $pool --format json --tail 1 --one --timeout 2s
             if (-not ($out -match '"ci":"windows-smoke"')) {
               throw "Roundtrip payload marker missing from follow output."
@@ -382,6 +398,13 @@ jobs:
           } finally {
             Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
           }
+
+      - name: Python wheel build/install smoke
+        shell: bash
+        env:
+          PLASMITE_SDK_DIR: ${{ github.workspace }}/target/release
+          UV_CACHE_DIR: ${{ runner.temp }}/uv-cache
+        run: ./scripts/python_wheel_smoke.sh
 
   full:
     if: github.event_name != 'pull_request'
@@ -430,11 +453,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.99.1
       - uses: taiki-e/install-action@v2
         with:
           tool: just
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
+      - run: cargo fetch --locked
       - run: just audit

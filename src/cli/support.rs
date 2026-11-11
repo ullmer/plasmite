@@ -8,11 +8,8 @@ use plasmite::api::Durability;
 use plasmite::api::Error;
 use plasmite::api::ErrorKind;
 use plasmite::api::FrameRef;
-use plasmite::api::Lite3DocRef;
 use plasmite::api::RemoteClient;
-use plasmite::api::lite3;
 use serde_json::Value;
-use serde_json::json;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -21,6 +18,9 @@ use std::time::UNIX_EPOCH;
 use url::Url;
 
 pub(crate) fn resolve_poolref(input: &str, pool_dir: &Path) -> Result<PathBuf, Error> {
+    if input.starts_with("udp://") {
+        return Err(udp_unsupported());
+    }
     if input.chars().any(std::path::is_separator) {
         return Ok(PathBuf::from(input));
     }
@@ -41,12 +41,29 @@ pub(crate) fn resolve_pool_target(input: &str, pool_dir: &Path) -> Result<PoolTa
     if input.starts_with("http://") || input.starts_with("https://") {
         return parse_remote_pool_target(input);
     }
+    if input
+        .get(..6)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("udp://"))
+    {
+        return parse_udp_pool_target(input);
+    }
     if input.contains("://") {
         return Err(Error::new(ErrorKind::Usage)
-            .with_message("remote pool ref must use http or https scheme")
-            .with_hint("Use shorthand: http(s)://host:port/<pool>."));
+            .with_message("pool ref must use http, https, or udp scheme")
+            .with_hint("Use http(s)://host:port/<pool> or udp://host:port/<pool>."));
     }
     resolve_poolref(input, pool_dir).map(PoolTarget::LocalPath)
+}
+
+pub(crate) fn udp_unsupported() -> Error {
+    Error::new(ErrorKind::Usage)
+        .with_message("this command does not support UDP pool refs")
+        .with_hint("Use udp://HOST:PORT/POOL with feed, follow, or duplex.")
+}
+
+pub(crate) fn parse_udp_pool_target(input: &str) -> Result<PoolTarget, Error> {
+    let (endpoint, pool) = plasmite::api::UdpClient::parse_pool_url(input)?;
+    Ok(PoolTarget::Udp { endpoint, pool })
 }
 
 pub(crate) fn parse_remote_pool_target(input: &str) -> Result<PoolTarget, Error> {
@@ -97,72 +114,25 @@ pub(crate) const DEFAULT_MAX_BODY_BYTES: u64 = 1024 * 1024;
 pub(crate) const DEFAULT_MAX_TAIL_TIMEOUT_MS: u64 = 30_000;
 pub(crate) const DEFAULT_MAX_TAIL_CONCURRENCY: usize = 64;
 
-// ── Missing-pool remediation hint policy ──────────────────────────────────
-//
-// When a pool is not found, the CLI tries to suggest a retry command with
-// `--create`.  The rendering strategy is *shell-agnostic argv echo*:
-//
-//   • Render an exact command only when the CLI has a stable, unambiguous argv
-//     token sequence available at error time (inline JSON, --file, repeated
-//     flags, etc.).
-//   • When the data source is stdin/pipe, exact reconstruction is unsafe —
-//     fall back to generic wording ("add --create to your invocation").
-//   • Never infer data not present in argv context.
-//   • Tokens that contain special characters are JSON-escaped rather than
-//     shell-quoted, keeping the hint correct across bash/zsh/fish/PowerShell.
-//
-// Coverage checklist (each shape should have a matching integration test):
-//   1. Inline JSON payload         → exact command emitted
-//   2. Paths with spaces (--file)  → exact command with quoted path args
-//   3. Repeated flags (--tag …)    → exact command preserves repeated flags
-//   4. Stdin/pipe usage            → fallback wording (no exact command)
-//
-// See also: `render_shell_agnostic_token`, `render_shell_agnostic_command`,
-//           `feed_exact_create_command_hint`, `follow_exact_create_command_hint`.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub(crate) fn add_missing_pool_hint(err: Error, pool_ref: &str, input: &str) -> Error {
+pub(crate) fn add_missing_pool_hint(err: Error, input: &str) -> Error {
     if err.kind() != ErrorKind::NotFound || err.hint().is_some() {
         return err;
     }
-    if input.chars().any(std::path::is_separator) {
-        return err.with_hint(
-            "Pool path not found. Check the path or pass --dir for a different pool directory.",
-        );
-    }
-    err.with_hint(format!(
-        "Create it first: plasmite pool create {pool_ref} (or pass --dir for a different pool directory)."
-    ))
+    err.with_hint(if input.contains("://") {
+        "Remote pool not found. Create it with server-side tooling first."
+    } else {
+        "Check the displayed pool path, or use pool create with --dir for that directory."
+    })
 }
 
-pub(crate) fn add_missing_pool_create_hint(
-    err: Error,
-    command: &str,
-    pool_ref: &str,
-    input: &str,
-    exact_command: Option<String>,
-) -> Error {
+pub(crate) fn add_missing_pool_create_hint(err: Error) -> Error {
     if err.kind() != ErrorKind::NotFound || err.hint().is_some() {
         return err;
     }
-    if input.contains("://") {
-        return err.with_hint("Remote pool not found. Create it with server-side tooling first.");
-    }
-    if input.chars().any(std::path::is_separator) {
-        return err.with_hint(
-            "Pool path not found. Check the path or pass --dir for a different pool directory.",
-        );
-    }
-    if let Some(exact_command) = exact_command {
-        return err.with_hint(format!(
-            "Pool is missing. Retry with exact command: {exact_command}"
-        ));
-    }
-    err.with_hint(format!(
-        "Pool is missing. Re-run with --create (local refs only), e.g. plasmite {command} {pool_ref} --create."
-    ))
+    err.with_hint("Add --create to your existing invocation to create this local pool, or check the displayed path.")
 }
 
+// Display argv as readable text; this does not produce portable shell quoting.
 pub(crate) fn render_shell_agnostic_token(token: &str) -> String {
     if !token.is_empty()
         && token
@@ -181,61 +151,6 @@ pub(crate) fn render_shell_agnostic_command(tokens: &[String]) -> String {
         .map(|token| render_shell_agnostic_token(token))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn follow_exact_create_command_hint(
-    pool: &str,
-    tail: u64,
-    one: bool,
-    timeout: Option<&str>,
-    since: Option<&str>,
-    where_expr: &[String],
-    tags: &[String],
-    quiet_drops: bool,
-    no_notify: bool,
-    replay: Option<f64>,
-) -> String {
-    let mut tokens = vec![
-        "plasmite".to_string(),
-        "follow".to_string(),
-        pool.to_string(),
-        "--create".to_string(),
-    ];
-    if tail > 0 {
-        tokens.push("--tail".to_string());
-        tokens.push(tail.to_string());
-    }
-    if one {
-        tokens.push("--one".to_string());
-    }
-    if let Some(timeout) = timeout {
-        tokens.push("--timeout".to_string());
-        tokens.push(timeout.to_string());
-    }
-    if let Some(since) = since {
-        tokens.push("--since".to_string());
-        tokens.push(since.to_string());
-    }
-    for expr in where_expr {
-        tokens.push("--where".to_string());
-        tokens.push(expr.clone());
-    }
-    for tag in tags {
-        tokens.push("--tag".to_string());
-        tokens.push(tag.clone());
-    }
-    if quiet_drops {
-        tokens.push("--quiet-drops".to_string());
-    }
-    if no_notify {
-        tokens.push("--no-notify".to_string());
-    }
-    if let Some(replay) = replay {
-        tokens.push("--replay".to_string());
-        tokens.push(replay.to_string());
-    }
-    render_shell_agnostic_command(&tokens)
 }
 
 pub(crate) fn add_missing_seq_hint(err: Error, pool_ref: &str) -> Error {
@@ -455,102 +370,26 @@ pub(crate) fn now_ns() -> Result<u64, Error> {
     Ok(duration.as_nanos() as u64)
 }
 
-pub(crate) fn format_ts(timestamp_ns: u64) -> Result<String, Error> {
-    use time::format_description::well_known::Rfc3339;
-    let ts =
-        time::OffsetDateTime::from_unix_timestamp_nanos(timestamp_ns as i128).map_err(|err| {
-            Error::new(ErrorKind::Internal)
-                .with_message("invalid timestamp")
-                .with_source(err)
-        })?;
-    ts.format(&Rfc3339).map_err(|err| {
-        Error::new(ErrorKind::Internal)
-            .with_message("timestamp format failed")
-            .with_source(err)
-    })
-}
-
-pub(crate) fn message_to_json(message: &plasmite::api::Message) -> Value {
-    serde_json::to_value(MessageWire::new(
-        message.seq,
-        message.time.clone(),
-        message.meta.tags.clone(),
-        message.data.clone(),
-    ))
-    .expect("message wire data is serializable")
+pub(crate) fn message_to_json(message: plasmite::api::Message) -> Value {
+    MessageWire::new(message.seq, message.time, message.meta.tags, message.data).into_json()
 }
 
 pub(crate) fn message_from_frame(frame: &FrameRef) -> Result<Value, Error> {
-    let (meta, data) = decode_payload(&frame.payload)?;
-    let tags = serde_json::from_value(
-        meta.get("tags")
-            .cloned()
-            .ok_or_else(|| Error::new(ErrorKind::Corrupt).with_message("missing meta.tags"))?,
-    )
-    .map_err(|err| {
-        Error::new(ErrorKind::Corrupt)
-            .with_message("meta.tags is not an array of strings")
-            .with_source(err)
-    })?;
-    Ok(serde_json::to_value(MessageWire::new(
-        frame.seq,
-        format_ts(frame.timestamp_ns)?,
-        tags,
-        data,
-    ))
-    .expect("message wire data is serializable"))
+    message_from_lite3(frame.seq, frame.timestamp_ns, &frame.payload)
 }
 
-pub(crate) fn decode_payload(payload: &[u8]) -> Result<(Value, Value), Error> {
-    let doc = Lite3DocRef::new(payload);
-    let meta_type = doc
-        .type_at_key(0, "meta")
-        .map_err(|err| err.with_message("missing meta"))?;
-    if meta_type != lite3::sys::LITE3_TYPE_OBJECT {
-        return Err(Error::new(ErrorKind::Corrupt).with_message("meta is not object"));
-    }
-
-    let meta_ofs = doc
-        .key_offset("meta")
-        .map_err(|err| err.with_message("missing meta"))?;
-    let tags_ofs = doc
-        .key_offset_at(meta_ofs, "tags")
-        .map_err(|err| err.with_message("missing meta.tags"))?;
-    let tags_count = doc
-        .count_at(tags_ofs)
-        .map_err(|_| Error::new(ErrorKind::Corrupt).with_message("meta.tags must be array"))?;
-    let mut tags = Vec::with_capacity(tags_count as usize);
-    for index in 0..tags_count {
-        let item_type = doc.array_item_type(tags_ofs, index).map_err(|_| {
-            Error::new(ErrorKind::Corrupt).with_message("meta.tags must be string array")
-        })?;
-        if item_type != lite3::sys::LITE3_TYPE_STRING {
-            return Err(
-                Error::new(ErrorKind::Corrupt).with_message("meta.tags must be string array")
-            );
-        }
-        let tag = doc.array_string_at(tags_ofs, index).map_err(|_| {
-            Error::new(ErrorKind::Corrupt).with_message("meta.tags must be string array")
-        })?;
-        tags.push(tag);
-    }
-    let meta = json!({ "tags": tags });
-
-    let data_ofs = doc
-        .key_offset("data")
-        .map_err(|err| err.with_message("missing data"))?;
-    let data_json = doc.to_json_at(data_ofs, false)?;
-    let data: Value = serde_json::from_str(&data_json).map_err(|err| {
-        Error::new(ErrorKind::Corrupt)
-            .with_message("invalid payload json")
-            .with_source(err)
-    })?;
-    Ok((meta, data))
+pub(crate) fn message_from_lite3(
+    seq: u64,
+    timestamp_ns: u64,
+    payload: &[u8],
+) -> Result<Value, Error> {
+    plasmite::api::Message::from_lite3(seq, timestamp_ns, payload).map(message_to_json)
 }
 
 #[cfg(test)]
 mod append_retry_tests {
     use super::*;
+    use serde_json::json;
     use std::io;
 
     #[test]
@@ -566,7 +405,8 @@ mod append_retry_tests {
                 plasmite::api::PoolOptions::new(1024 * 1024),
             )
             .expect("create");
-            let payload = lite3::encode_message(&[], &json!({"n": 1})).expect("encode");
+            let payload =
+                plasmite::api::lite3::encode_message(&[], &json!({"n": 1})).expect("encode");
             let result: Result<(), Error> = retry_append(
                 Some(RetryConfig {
                     retries: 3,

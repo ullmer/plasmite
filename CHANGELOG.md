@@ -2,7 +2,98 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased — 2.0.0]
+## [Unreleased]
+
+### Simpler message workflows (next major release)
+
+- Make duplex a generic two-way stream. Terminal and pipe input use feed's parser;
+  remove --me, --echo-self, built-in chat data, and sender suppression. Input EOF
+  closes sending while reception continues. Establish reception before sending.
+- Keep timed playback in CLI follow --replay and remove the separate Rust, Go,
+  Python and Node replay APIs. SDK applications control timing over ordinary streams.
+- Clamp HTTP tail waits to the server maximum and remove CLI error-text probing.
+- Replace reconstructed retry commands with concise guidance tied to the pool path.
+
+The command/API changes await a major release. Package versions remain unchanged.
+See the [migration guide](docs/record/upgrading-next-major.md) for removed symbols,
+EOF behavior, client/server compatibility, and playback examples.
+
+### Security maintenance
+
+Update the test-only `rustix` dependency to 1.1.6 for RUSTSEC-2026-0486.
+The production dependency tree does not include it.
+
+### Breaking UDP follow behavior (next major release)
+
+UDP follow now delivers matching messages in arrival order, including late
+messages and duplicates. Consumers choose whether to reorder or discard them.
+Sequence jumps and progress no longer create inferred gaps or suppress DATA;
+gap events report explicit server skips. The client preserves exact skip
+ranges and reasons and reports retention flags without inventing a range.
+
+Finite reads finish on terminal progress after draining accepted events.
+Packets still in flight may go unread, and exit 0 gives no assurance of complete
+delivery. Observed oversized/pressure skips still exit 1; confirmed retention
+gaps exit 9. Local and HTTP tails retain their ordering contracts. The wire
+format and public layouts remain unchanged. This reverses documented 1.x
+client behavior and requires a major release under the compatibility policy.
+
+Finite UDP completion now releases its reader worker and pool mapping. A bounded
+completion record keeps only the metadata and original file identity needed to
+answer renewals until close or expiry. Both receive phases share packet and event
+handling. Public `Gap` names remain compatibility labels for server skips;
+`Unknown` remains reserved and clients reject it as a wire skip reason.
+
+## [1.3.0] - 2026-11-10
+
+**Delete `--data` from existing `plasmite feed` commands.** `feed` recognizes
+ordinary JSON and YAML objects automatically. It copies an object with exactly
+`seq`, `time`, `meta`, and `data`, where `meta` contains only `tags`, as a
+Plasmite message. If a script used `--data` to store that exact shape as
+application data, wrap the object in an outer field before feeding it.
+This CLI change is a one-time exception to the major-version policy.
+[Upgrade guide](https://github.com/sandover/plasmite/blob/v1.3.0/docs/record/upgrading-1.2.md#create-messages)
+
+### Linux installs and Python wheels
+
+Prebuilt Linux x86-64 packages now run on Ubuntu 22.04 and Debian 12. The
+Linux Python wheel bundles the CLI and native library. Python installs provide
+both `plasmite` and `pls`, and the wheels support Python 3.10 and newer across
+CPython versions. The Python 3.10 binding can read nanosecond timestamps.
+
+### Security and reliability
+
+- Update the TLS certificate verifier, trusted roots, and Tokio runtime to
+  address RustSec advisories.
+- Build with Rust 1.99.1 to fix a shared-library alignment error on macOS 27.
+- Use the same retention and timeout rules for JSON and Lite3 tails. Browser
+  streams resume from the next sequence after a disconnect. UDP follow handles
+  early skips, completion, and cancellation more reliably.
+
+[Full changes since 1.2.1](https://github.com/sandover/plasmite/compare/v1.2.1...v1.3.0)
+
+## [1.2.1] - 2026-10-14
+
+`feed` now accepts ordinary JSON and YAML objects without `--data`, while still accepting messages piped from other Plasmite commands. Tags survive the trip. Existing `--data` commands continue to work.
+
+`--create-size` creates missing local pools for `feed` and `tap`. `follow --no-follow` reads all currently retained history and exits.
+
+```bash
+plasmite feed source --create-size 1M --tag sensor '{"temperature":21}'
+plasmite follow source --no-follow | plasmite feed destination --create-size 1M
+```
+
+See the [CLI documentation](docs/cli.md#creating-messages) for input rules and the reserved message shape.
+
+## [1.2.0] - 2026-10-13
+
+Plasmite 1.2 adds UDP feed and follow across the CLI and native language APIs,
+complete-message CLI pipes, and YAML input/output.
+
+**This release includes breaking CLI changes despite the minor version number.**
+Existing pool files, HTTP and MCP formats, and existing language API behavior
+remain compatible. Read the [CLI upgrade guide](docs/record/upgrading-1.2.md)
+before updating scripts.
 
 ### CLI message pipes
 
@@ -16,22 +107,50 @@ output switches. Terminals default to readable output; pipes and files default
 to compact JSON. Feed detects JSON, marked YAML, and framed Lite3 without waiting
 for more messages. JSON accepts multiline objects. YAML input/output preserves
 JSON-compatible values. Framed Lite3 supports one or many messages; the raw
-form supports one attachment through EOF. See [the CLI upgrade guide](docs/record/upgrading-2.0.md).
+form supports one attachment through EOF.
 
 Invalid input stops and earlier appends remain. Closed downstream pipes stop
 normally; other output errors never retry successful appends. Finite history
 reads fail if retention drops selected messages. Failed access checks return
 nonzero. Text input permits encoding overhead rather than the old 1 MiB cap.
 
-### UDP input and binary append
+### UDP feed and follow
 
-`serve --udp` adds directory-wide append-only UDP input. Raw Lite3 appends preserve
-original bytes and reject unreadable nested values before committing. Binary
-append receipts derive from validated input and assigned identity, avoiding a
+`serve --udp` accepts directory-wide UDP input. Add `--udp-follow` to enable
+reads. `feed`, `follow`, and `duplex` accept `udp://HOST:PORT/POOL`; Rust, C,
+Python, Node, and Go expose matching send/follow APIs. Installed servers retain
+their UDP settings across updates, and reads stay off until explicitly enabled.
+
+UDP provides best-effort delivery on loopback or a separately protected,
+controlled network. It adds no authentication, encryption, stored-write
+acknowledgement, or message retransmission. A successful send means the operating
+system accepted a datagram; UDP feed emits no append receipt. Follow reports
+skipped ranges, rejects replaced pools, and bounds subscribers with leases.
+The maximum whole datagram is 65,507 bytes, including its framing.
+
+The clients preserve original Lite3 bytes and full-width sequence/time metadata.
+Node opens and polls follows without blocking its event loop. Socket-buffer
+settings support the maximum packet on the tested macOS path. Tests cover loss,
+duplicates, reordering, retention, leases, IPv6, and exact maximum-sized packets.
+The [UDP measurements](docs/performance/udp-transport.md) describe delivery and
+latency for a paced loopback workload; they establish no throughput or speed
+advantage over HTTP.
+
+### Binary append validation
+
+Raw Lite3 appends preserve original bytes and reject unreadable nested values
+before committing. Binary append receipts derive from validated input and assigned identity, avoiding a
 second lookup that concurrent retention could invalidate.
 
-Language APIs, HTTP, MCP and pool files keep their current formats. This source
-prepares a major CLI cutover; no 2.0 release has been published.
+The additional validation increases measured 16 KiB raw append cost by about
+3.7 microseconds on the test host. The ordinary JSON write path remains unchanged.
+
+### Examples
+
+The cookbook adds a TouchOSC capture recipe and a runnable OSC-to-JSON-Lines
+example that feeds messages through a persistent CLI pipe.
+
+[Full changes since 1.1.0](https://github.com/sandover/plasmite/compare/v1.1.0...v1.2.0)
 
 ## [1.1.0] - 2026-10-05
 

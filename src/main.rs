@@ -26,6 +26,11 @@ mod serve_service;
 mod server_private;
 mod since;
 mod udp_input;
+#[expect(
+    dead_code,
+    reason = "Server and library compile different parts of the shared UDP codec."
+)]
+mod udp_wire;
 #[cfg(windows)]
 mod windows_private;
 
@@ -40,6 +45,7 @@ use pool_paths::default_pool_dir;
 enum PoolTarget {
     LocalPath(PathBuf),
     Remote { base_url: String, pool: String },
+    Udp { endpoint: String, pool: String },
 }
 
 fn main() {
@@ -242,9 +248,7 @@ mod tests {
     use crate::cli::output_support::{
         format_bytes, format_relative_time, format_seq_range, format_timestamp_human,
     };
-    use crate::cli::stream_support::{
-        duplex_requires_me_when_tty, matches_required_tags, parse_duplex_tty_line,
-    };
+    use crate::cli::stream_support::matches_required_tags;
     use crate::cli::support::{
         RetryConfig, parse_duration, parse_size, resolve_pool_target, retry_append,
     };
@@ -324,23 +328,13 @@ mod tests {
             ("plasmite doctor", vec!["all", "format", "help"]),
             (
                 "plasmite duplex",
-                vec![
-                    "create",
-                    "echo-self",
-                    "format",
-                    "help",
-                    "me",
-                    "since",
-                    "tail",
-                    "timeout",
-                ],
+                vec!["create", "format", "help", "since", "tail", "timeout"],
             ),
             (
                 "plasmite feed",
                 vec![
                     "create",
                     "create-size",
-                    "data",
                     "durability",
                     "file",
                     "format",
@@ -395,6 +389,7 @@ mod tests {
                     "tls-cert",
                     "tls-key",
                     "udp",
+                    "udp-follow",
                 ],
             ),
             (
@@ -408,11 +403,13 @@ mod tests {
                     "max-tail-concurrency",
                     "max-tail-timeout-ms",
                     "no-udp",
+                    "no-udp-follow",
                     "remote-bind",
                     "shared-address",
                     "tls-cert",
                     "tls-key",
                     "udp",
+                    "udp-follow",
                 ],
             ),
             (
@@ -598,27 +595,6 @@ mod tests {
     }
 
     #[test]
-    fn duplex_requires_me_when_tty_inputs() {
-        assert!(duplex_requires_me_when_tty(true, None));
-        assert!(!duplex_requires_me_when_tty(false, None));
-        assert!(!duplex_requires_me_when_tty(true, Some("alice")));
-        assert!(!duplex_requires_me_when_tty(false, Some("alice")));
-    }
-
-    #[test]
-    fn parse_duplex_tty_line_supports_text_and_crlf() {
-        let value = parse_duplex_tty_line("alice", "hello world\r\n").expect("value");
-        assert_eq!(value.get("from").and_then(|v| v.as_str()), Some("alice"));
-        assert_eq!(
-            value.get("msg").and_then(|v| v.as_str()),
-            Some("hello world")
-        );
-
-        assert!(parse_duplex_tty_line("alice", "\n").is_none());
-        assert!(parse_duplex_tty_line("alice", "   \r\n").is_none());
-    }
-
-    #[test]
     fn read_json_stream_accepts_multiple_values() {
         let input = b"{\"a\":1}\n {\"b\":2} {\"c\":3}";
         let mut values = Vec::new();
@@ -685,6 +661,49 @@ mod tests {
                 pool: "demo".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn resolve_pool_target_accepts_one_decoded_udp_name() {
+        let target = resolve_pool_target(
+            "udp://localhost:9701/sensor%20data",
+            Path::new("/tmp/pools"),
+        )
+        .expect("UDP target");
+        assert_eq!(
+            target,
+            PoolTarget::Udp {
+                endpoint: "udp://localhost:9701".into(),
+                pool: "sensor data".into()
+            }
+        );
+        assert_eq!(
+            resolve_pool_target("udp://[::1]:9701/sensors", Path::new("/tmp/pools")).unwrap(),
+            PoolTarget::Udp {
+                endpoint: "udp://[::1]:9701".into(),
+                pool: "sensors".into()
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_pool_target_rejects_unsafe_udp_urls() {
+        for input in [
+            "udp://localhost/sensors",
+            "udp://localhost:9701/sensors/other",
+            "udp://localhost:9701/a%2Fb",
+            "udp://localhost:9701/a%5Cb",
+            "udp://localhost:9701/C%3Aevil",
+            "udp://user@localhost:9701/sensors",
+            "udp://@localhost:9701/sensors",
+            "udp://localhost:9701/sensors?x=1",
+            "udp://localhost:9701/sensors#x",
+        ] {
+            assert!(
+                resolve_pool_target(input, Path::new("/tmp/pools")).is_err(),
+                "{input}"
+            );
+        }
     }
 
     #[test]

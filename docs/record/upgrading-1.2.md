@@ -1,8 +1,9 @@
-# Upgrading CLI scripts to 2.0
+# Upgrading CLI scripts to Plasmite 1.2.0
 
-Plasmite 2.0 makes complete messages the common unit of CLI pipes. This is a
-hard cutover: old switches fail rather than selecting compatibility behavior.
-Pool files, language APIs, HTTP and MCP keep their existing contracts.
+Plasmite 1.2.0 includes breaking CLI changes that make complete messages the
+common unit of CLI pipes. This is a hard cutover: old switches fail rather than
+selecting compatibility behavior. Pool files, language APIs, HTTP and MCP keep
+their existing contracts.
 
 ## Copy messages with defaults
 
@@ -17,24 +18,31 @@ The destination keeps contents and tags, and assigns its own sequence and time.
 `feed` writes complete newly appended messages, so another `feed` can continue
 the chain. The reader processes each complete message immediately.
 
-## Create messages explicitly
+## Create messages
 
-Before 2.0, feed treated every JSON object as application contents. Add `--data`
-when that is your intent:
+In 1.2.1, ordinary objects are application data again; no `--data` is needed.
+Version 1.2.1 still accepts existing `--data` scripts. Version 1.3.0 removes
+the flag. Delete it from commands that feed application objects. In
+1.2.0, the flag was required for ordinary application data.
 
 ```bash
-plasmite feed events --data '{"temperature":21}'
-plasmite feed events --data --tag sensor '{"temperature":21}'
-jq -c '.[]' readings.json | plasmite feed events --data
+plasmite feed events '{"temperature":21}'
+plasmite feed events --tag sensor '{"temperature":21}'
+jq -c '.[]' readings.json | plasmite feed events
 ```
 
-Without `--data`, feed requires a complete message with object `data` and
-optional `meta.tags`. Unknown message/meta fields fail. To extract application
-contents, use `jq -c '.data'`; a following feed needs `--data` to wrap them.
+Only the full output shape is reserved: exactly `seq`, `time`, `meta`, and
+`data`, with exactly `meta.tags`. Such objects copy as messages, with validated
+source identity and new destination identity. A field named `data` alone is
+ordinary application data. To store the reserved shape as application data in
+1.3.0, wrap the object in an outer field. In 1.2.1, `--data` forces application
+interpretation of the reserved shape. See [message input rules](../cli.md#creating-messages).
+To extract application contents, use `jq -c '.data'`; a following feed accepts
+them directly.
 
 ## Choose one output format
 
-| Before | 2.0 |
+| Before | 1.2.0 |
 | --- | --- |
 | `--json`, `--jsonl`, `--format jsonl` | `--format json`, or omit it in a pipe/file |
 | `--yaml` | `--format yaml` |

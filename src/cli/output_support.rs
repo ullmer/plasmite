@@ -23,12 +23,11 @@ use std::time::UNIX_EPOCH;
 use super::support::now_ns;
 
 pub(crate) fn short_display_path(path: &Path, base_dir: Option<&Path>) -> String {
-    if let Some(base) = base_dir {
-        if let Ok(relative) = path.strip_prefix(base) {
-            if !relative.as_os_str().is_empty() {
-                return relative.display().to_string();
-            }
-        }
+    if let Some(base) = base_dir
+        && let Ok(relative) = path.strip_prefix(base)
+        && !relative.as_os_str().is_empty()
+    {
+        return relative.display().to_string();
     }
     path.file_name()
         .and_then(|name| name.to_str())
@@ -192,6 +191,16 @@ pub(crate) fn emit_notice(notice: &Notice, color_mode: ColorMode, output_mode: O
     let is_tty = io::stderr().is_terminal();
     if !output_mode.is_structured() {
         let label = colorize_label("notice:", color_mode.use_color(is_tty), AnsiColor::Yellow);
+        if notice.kind == "udp-send" {
+            for (index, line) in notice.message.lines().enumerate() {
+                if index == 0 {
+                    eprintln!("{label} {}", human_literal(line));
+                } else {
+                    eprintln!("{}", human_literal(line));
+                }
+            }
+            return;
+        }
         let message = human_literal(&notice.message);
         if notice.cmd == "feed" {
             eprintln!("{label} {message}");

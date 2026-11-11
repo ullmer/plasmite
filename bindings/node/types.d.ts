@@ -1,6 +1,6 @@
 /*
 Purpose: Stable TypeScript declarations for the public Node bindings API.
-Key Exports: Client, Pool, Stream, Lite3Stream, parseMessage, replay, and remote client types.
+Key Exports: Client, Pool, Stream, Lite3Stream, parseMessage, and remote client types.
 Role: Preserve complete JS + native type surface independently of generated files.
 Invariants: Public runtime exports from index.js are represented here.
 Invariants: Numeric sequence fields accept number or bigint input.
@@ -83,7 +83,6 @@ export class Pool {
   getJson(seq: number | bigint): Buffer
   getLite3(seq: number | bigint): Lite3Frame
   tail(options?: LocalTailOptions): AsyncGenerator<Message, void, unknown>
-  replay(options?: ReplayOptions): AsyncGenerator<Message, void, unknown>
   openStream(
     sinceSeq?: number | bigint | null,
     maxMessages?: number | bigint | null,
@@ -103,6 +102,8 @@ export class Pool {
 export class Stream {
   [Symbol.iterator](): Iterator<Buffer>
   nextJson(): Buffer | null
+  nextJsonWait(timeoutMs: number | bigint): Promise<{ status: 0 | 1 | 2 | 3; message?: Buffer | null }>
+  cancel(): void
   close(): void
   [Symbol.dispose](): void
 }
@@ -110,16 +111,10 @@ export class Stream {
 export class Lite3Stream {
   [Symbol.iterator](): Iterator<Lite3Frame>
   next(): Lite3Frame | null
+  nextWait(timeoutMs: number | bigint): Promise<{ status: 0 | 1 | 2 | 3; frame?: Lite3Frame | null }>
+  cancel(): void
   close(): void
   [Symbol.dispose](): void
-}
-
-export interface ReplayOptions {
-  speed?: number
-  sinceSeq?: number | bigint
-  maxMessages?: number | bigint
-  timeoutMs?: number | bigint
-  tags?: string[]
 }
 
 export interface LocalTailOptions {
@@ -128,14 +123,76 @@ export interface LocalTailOptions {
   timeoutMs?: number | bigint
   tags?: string[]
   errorOnGap?: boolean
+  signal?: AbortSignal
+}
+
+export type UdpStart =
+  | { kind: "new" }
+  | { kind: "last"; count: number | bigint }
+  | { kind: "since"; timestampNs: number | bigint }
+  | { kind: "sequence"; seq: number | bigint }
+
+export interface UdpFollowOptions {
+  start?: UdpStart
+  live?: boolean
+}
+
+export interface UdpWaitOptions {
+  signal?: AbortSignal
+}
+
+export type UdpEvent =
+  | {
+      kind: "frame"
+      seq: bigint
+      timestampNs: bigint
+      payload: Buffer
+      message: Message
+    }
+  // "gap" is the compatibility name for a server skip; "unknown" is reserved.
+  | { kind: "gap"; first: bigint; last: bigint; reason: "unknown" | "oversized" | "retention" | "pressure" }
+  | {
+      kind: "progress"
+      startSeq: bigint
+      nextSeq: bigint
+      endSeq: bigint | null
+      terminal: boolean
+      retentionGap: boolean
+    }
+
+export const UdpStart: {
+  new: () => UdpStart
+  last(count: number | bigint): UdpStart
+  since(timestampNs: number | bigint): UdpStart
+  sequence(seq: number | bigint): UdpStart
+}
+
+export class UdpClient {
+  constructor(endpoint: string)
+  openPool(poolName: string): UdpPool
+  close(): void
+  [Symbol.dispose](): void
+}
+
+export class UdpPool {
+  sendJson(payload: unknown, tags?: string[]): void
+  sendLite3(payload: Buffer): void
+  follow(options?: UdpFollowOptions): Promise<UdpFollow>
+  close(): void
+  [Symbol.dispose](): void
+}
+
+export class UdpFollow {
+  readonly finished: boolean
+  nextEvent(timeoutMs?: number | bigint, options?: UdpWaitOptions): Promise<UdpEvent | null>
+  events(options?: { pollIntervalMs?: number | bigint; signal?: AbortSignal }): AsyncGenerator<UdpEvent, void, unknown>
+  cancel(): void
+  close(): void
+  [Symbol.dispose](): void
+  [Symbol.asyncIterator](): AsyncGenerator<UdpEvent, void, unknown>
 }
 
 export function parseMessage(payload: Buffer | Message | MessageEnvelope): Message
-
-export function replay(
-  pool: Pool,
-  options?: ReplayOptions,
-): AsyncGenerator<Message, void, unknown>
 
 export interface RemoteClientOptions {
   token?: string

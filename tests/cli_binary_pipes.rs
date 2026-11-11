@@ -15,7 +15,7 @@ fn append(pool: &mut Pool, value: Value, tags: &[String]) -> Vec<u8> {
     payload
 }
 
-fn pipe(directory: &Path, source: &str, destination: &str) -> std::process::Output {
+fn pipe(directory: &Path, source: &str, destination: &str, format: &str) -> std::process::Output {
     let mut reader = KillOnDrop(
         cmd()
             .args([
@@ -34,7 +34,14 @@ fn pipe(directory: &Path, source: &str, destination: &str) -> std::process::Outp
             .unwrap(),
     );
     let writer = cmd()
-        .args(["--dir", directory.to_str().unwrap(), "feed", destination])
+        .args([
+            "--dir",
+            directory.to_str().unwrap(),
+            "feed",
+            destination,
+            "--format",
+            format,
+        ])
         .stdin(Stdio::from(reader.0.stdout.take().unwrap()))
         .output()
         .unwrap();
@@ -76,7 +83,7 @@ fn local_and_http_binary_pipes_preserve_exact_bytes_and_assign_identity() {
         )
         .unwrap();
         append(&mut destination, json!({"existing":true}), &[]);
-        let output = pipe(directory, &source_ref, &destination_ref);
+        let output = pipe(directory, &source_ref, &destination_ref, "json");
         let messages = parse_json_lines(&output.stdout);
         assert_eq!(messages.len(), 2);
         for (index, payload) in original.iter().enumerate() {
@@ -87,6 +94,46 @@ fn local_and_http_binary_pipes_preserve_exact_bytes_and_assign_identity() {
             assert_eq!(messages[index]["data"]["temperature"], 20 + index as u64);
             assert_ne!(messages[index]["time"], "1970-01-01T00:00:00.000000012Z");
         }
+    }
+}
+
+#[test]
+fn binary_feed_receipts_report_the_committed_identity_and_original_payload() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path();
+    let mut source = Pool::create(
+        directory.join("source.plasmite"),
+        PoolOptions::new(1024 * 1024),
+    )
+    .unwrap();
+    let tags = vec!["sensor".to_string()];
+    let payloads = [
+        append(&mut source, json!({"reading":20}), &tags),
+        append(&mut source, json!({"reading":21}), &tags),
+    ];
+    let server = ServeProcess::start(directory);
+    for (name, target) in [
+        ("local", "local".to_owned()),
+        ("remote", format!("{}/remote", server.local_url)),
+    ] {
+        let mut pool = Pool::create(
+            directory.join(format!("{name}.plasmite")),
+            PoolOptions::new(1024 * 1024),
+        )
+        .unwrap();
+        append(&mut pool, json!({"existing":true}), &[]);
+        let output = pipe(directory, "source", &target, "lite3");
+        let mut expected = b"PLS1".to_vec();
+        for (seq, payload) in (2..).zip(&payloads) {
+            let stored = pool.get_lite3(seq).unwrap();
+            assert_eq!(&stored.payload, payload);
+            assert_ne!(stored.timestamp_ns, 12, "feed assigns destination time");
+            expected.extend_from_slice(&seq.to_be_bytes());
+            expected.extend_from_slice(&stored.timestamp_ns.to_be_bytes());
+            expected.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+            expected.extend_from_slice(payload);
+        }
+        assert_eq!(output.stdout, expected);
     }
 }
 
@@ -132,6 +179,11 @@ fn framed_fetch_matches_local_and_http_and_truncation_keeps_prior_appends() {
     assert!(remote.status.success());
     assert_eq!(local.stdout, remote.stdout);
     assert_eq!(&local.stdout[..4], b"PLS1");
+    let stored = source.get_lite3(1).unwrap();
+    assert_eq!(&local.stdout[4..12], &1u64.to_be_bytes());
+    assert_eq!(&local.stdout[12..20], &stored.timestamp_ns.to_be_bytes());
+    assert_eq!(&local.stdout[20..24], &(payload.len() as u32).to_be_bytes());
+    assert_eq!(&local.stdout[24..], payload.as_slice());
     let mut truncated = local.stdout.clone();
     truncated.extend_from_slice(&[0, 0]); // The next frame's header ends early.
     let mut feed = KillOnDrop(
