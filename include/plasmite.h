@@ -66,6 +66,22 @@ typedef struct plsm_udp_client plsm_udp_client_t;
 typedef struct plsm_udp_pool plsm_udp_pool_t;
 typedef struct plsm_udp_follow plsm_udp_follow_t;
 
+typedef struct plsm_pool_bounds_t { //Gemini generated, per BAU request
+    uint64_t oldest_seq;
+    uint8_t has_oldest;
+    uint64_t newest_seq;
+    uint8_t has_newest;
+} plsm_pool_bounds_t;
+
+typedef struct plsm_pool_info_t { //Gemini generated, per BAU request
+    char* path;
+    uint64_t file_size;
+    plsm_pool_bounds_t bounds;
+} plsm_pool_info_t;
+
+int plsm_pool_info(plsm_pool_t* pool, plsm_pool_info_t** out_info, plsm_error_t** out_err);
+void plsm_pool_info_free(plsm_pool_info_t* info);
+
 typedef enum plsm_error_kind {
     PLSM_ERROR_INTERNAL = 1,
     PLSM_ERROR_USAGE = 2,
