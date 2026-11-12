@@ -1,9 +1,8 @@
 """
 Threaded callback-based Plasmite listener.
-
 Inspired by enoPlasmaListener.py
-Brygg Ullmer + Copilot
-2026-11-11
+Brygg Ullmer, Clemson University + Copilot
+Begun 2026-11-11
 """
 
 import threading
@@ -55,12 +54,8 @@ class enoPlasmiteListener:
       self.logger.info(f"Connected to pool {self.poolName}")
       self.ready.set()
 
-      for msg in pool.tail(
-        timeout_ms=None,
-        tags=self.tags):
-
+      for msg in pool.tail(timeout_ms=None, tags=self.tags):
         if not self.running: break
-
         try:
           if self.callback: self.callback(msg)
         except Exception: traceback.print_exc()
@@ -72,7 +67,6 @@ class enoPlasmiteListener:
   ########### start ###########
 
   def start(self):
-
     if not self.running:
       self.running = True
       self.thread = threading.Thread(target=self._listen, daemon=True)
