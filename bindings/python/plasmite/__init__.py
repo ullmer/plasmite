@@ -110,6 +110,19 @@ class RetentionGapError(PlasmiteError):
 class MessageMeta:
     tags: list[str]
 
+#Gemini-generated, per BAU request
+@dataclass(frozen=True) 
+class PoolBounds:
+    oldest_seq: int | None
+    newest_seq: int | None
+
+
+#Gemini-generated, per BAU request
+@dataclass(frozen=True)
+class PoolInfo:
+    path: str
+    file_size: int
+    bounds: PoolBounds
 
 @dataclass(frozen=True)
 class Message:
@@ -159,6 +172,22 @@ class plsm_buf_t(Structure):
         ("len", c_size_t),
     ]
 
+# Gemini-generated, per BAU request
+class plsm_pool_bounds_t(Structure):
+    _fields_ = [
+        ("oldest_seq", c_uint64),
+        ("has_oldest", c_uint8),
+        ("newest_seq", c_uint64),
+        ("has_newest", c_uint8),
+    ]
+
+# Gemini-generated, per BAU request
+class plsm_pool_info_t(Structure):
+    _fields_ = [
+        ("path", c_char_p),
+        ("file_size", c_uint64),
+        ("bounds", plsm_pool_bounds_t),
+    ]
 
 class plsm_udp_event_t(Structure):
     _fields_ = [
@@ -279,6 +308,20 @@ _LIB.plsm_pool_open.argtypes = [
 _LIB.plsm_pool_open.restype = c_int
 _LIB.plsm_pool_free.argtypes = [POINTER(plsm_pool_t)]
 _LIB.plsm_pool_free.restype = None
+
+# Gemini generated, per BAU request
+if hasattr(_LIB, "plsm_pool_info"):
+    _LIB.plsm_pool_info.argtypes = [
+        POINTER(plsm_pool_t),
+        POINTER(POINTER(plsm_pool_info_t)),
+        POINTER(POINTER(plsm_error_t)),
+    ]
+    _LIB.plsm_pool_info.restype = c_int
+
+# Gemini generated, per BAU request
+if hasattr(_LIB, "plsm_pool_info_free"):
+    _LIB.plsm_pool_info_free.argtypes = [POINTER(plsm_pool_info_t)]
+    _LIB.plsm_pool_info_free.restype = None
 
 _LIB.plsm_pool_append_json.argtypes = [
     POINTER(plsm_pool_t),
@@ -702,6 +745,39 @@ class Pool:
         self._lock = RLock()
         self._ptr = ptr
 
+    #Gemini-generated, per BAU request
+    @_serialized_handle
+    def info(self) -> PoolInfo:
+        """Query pool metadata and sequence bounds (oldest_seq, newest_seq)."""
+        _require_open(self._ptr, "pool")
+        if not hasattr(_LIB, "plsm_pool_info"):
+            raise NotImplementedError("plsm_pool_info is not exported by the loaded libplasmite C ABI.")
+
+        out_info = POINTER(plsm_pool_info_t)()
+        out_err = POINTER(plsm_error_t)()
+        rc = _LIB.plsm_pool_info(self._ptr, byref(out_info), byref(out_err))
+        if rc != 0:
+            raise _take_error(out_err)
+
+        try:
+            info_struct = out_info.contents
+            path_str = info_struct.path.decode("utf-8") if info_struct.path else ""
+            file_size = int(info_struct.file_size)
+            bounds_struct = info_struct.bounds
+
+            oldest = int(bounds_struct.oldest_seq) if bounds_struct.has_oldest else None
+            newest = int(bounds_struct.newest_seq) if bounds_struct.has_newest else None
+
+            return PoolInfo(
+                path=path_str,
+                file_size=file_size,
+                bounds=PoolBounds(oldest_seq=oldest, newest_seq=newest)
+            )
+        finally:
+            if hasattr(_LIB, "plsm_pool_info_free"):
+                _LIB.plsm_pool_info_free(out_info)
+
+
     @_serialized_handle
     def append_json(self, payload: bytes, tags: Iterable[str], durability: Durability) -> bytes:
         _require_open(self._ptr, "pool")
@@ -869,10 +945,19 @@ class Pool:
         tags: Optional[Iterable[str]] = None,
         error_on_gap: bool = False,
         cancel: Event | None = None,
+        from_latest: bool = False,  # Gemini generated, per BAU request
     ) -> Generator[Message, None, None]:
         """Tail JSON messages and optionally filter by exact tags."""
         if max_messages == 0:
             return
+
+        if from_latest and since_seq is None: #Gemini-generated, per BAU request
+            try:
+                pool_info = self.info()
+                if pool_info.bounds.newest_seq is not None:
+                    since_seq = pool_info.bounds.newest_seq + 1
+            except Exception:
+                pass
         required_tags = list(tags or [])
         stream_max_messages = (
             None if (max_messages is not None and required_tags) else max_messages
@@ -1461,4 +1546,6 @@ __all__ = [
     "DEFAULT_POOL_SIZE_BYTES",
     "default_pool_dir",
     "parse_message",
+    "PoolInfo",
+    "PoolBounds",
 ]
