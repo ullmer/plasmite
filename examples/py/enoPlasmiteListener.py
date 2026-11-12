@@ -9,6 +9,7 @@ import threading
 import logging
 import traceback
 import json
+from types import SimpleNamespace
 
 from plasmite import Client
 
@@ -64,7 +65,7 @@ class enoPlasmiteListener:
           if self.callback: 
             if isinstance(msg, bytes):
               msg = msg.decode("utf-8")
-              obj = json.loads(msg)
+              obj = json.loads(msg, object_hook=lambda d: SimpleNamespace(**d))
               self.callback(obj)
         except Exception: traceback.print_exc()
 

@@ -8,8 +8,8 @@ import time
 import sys
 
 def handleMsg(msg):
-  print("\nSEQ :", msg['seq'])
-  print("DATA:",   msg['data'])
+  print("\nSEQ :", msg.seq)
+  print("DATA:",   msg.data)
 
 listener = enoPlasmiteListener(poolName="grObjPool", tags=["gfx", "scope:sharedCanvas"],
   callback=handleMsg)
