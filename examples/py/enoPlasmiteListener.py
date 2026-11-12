@@ -13,60 +13,55 @@ import traceback
 from plasmite import Client
 
 class enoPlasmiteListener:
-
   poolName = None
   dataPath = "./data"
-
-  thread = None
-  running = False
-
+  thread   = None
+  running  = False
   callback = None
-  ready = None
-
-  tags = None
+  ready    = None
+  tags     = None
 
   ########### constructor ###########
   def __init__(self, **kwargs):
-
     self.__dict__.update(kwargs)
-
     self.running = False
     self.ready   = threading.Event()
 
     logging.basicConfig(level=logging.INFO)
     self.logger = logging.getLogger(__name__)
 
+  ########### constructor ###########
+  def logErr(self, msg):
+    try:    self.logger.error(msg); traceback.print_exc()
+    except: print("logErr error:"); traceback.print_exc()
 
   ########### _listen ###########
   def _listen(self):
-
     try:
+      if self.poolName is None: 
+        self.logErr("No pool name provided"); return
 
-      if self.poolName is None:
-        self.logger.error("No pool name provided")
-        return
+      try:    client    = Client(self.dataPath)
+      except: self.logErr("_listen: problem creating client:"); return 
 
-      with Client(self.dataPath) as client:
+      try:    pool      = client.open_pool(self.poolName) 
+      except: self.logErr("_listen: problem creating pool:"); return 
 
-        with client.open_pool(self.poolName) as pool:
+      self.pool = pool
+      self.logger.info(f"Connected to pool {self.poolName}")
+      self.ready.set()
 
-          self.pool = pool
-          self.logger.info(f"Connected to pool {self.poolName}")
-          self.ready.set()
+      for msg in pool.tail(
+        timeout_ms=None,
+        tags=self.tags):
 
-          for msg in pool.tail(
-              timeout_ms=None,
-              tags=self.tags):
+        if not self.running: break
 
-            if not self.running: break
-
-            try:
-              if self.callback: self.callback(msg)
-            except Exception:
-              traceback.print_exc()
+        try:
+          if self.callback: self.callback(msg)
+        except Exception: traceback.print_exc()
 
     except Exception:
-
       self.logger.error("_listen setup issue")
       traceback.print_exc()
 
