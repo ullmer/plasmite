@@ -24,6 +24,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use std::os::raw::c_int;
 
 #[repr(C)]
 pub struct plsm_client {
