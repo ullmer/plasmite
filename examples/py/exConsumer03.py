@@ -7,17 +7,14 @@ from enoPlasmiteListener import *
 import time
 import sys
 
-def handle_message(msg):
+def handleMsg(msg):
   #print("SEQ :", msg.seq)
   #print("dir:", dir(msg))
   #print("DATA:", msg.data)
-  print("msg:", str(msg))
+  print("\nmsg:", str(msg))
 
-listener = enoPlasmiteListener(
-  poolName="grObjPool",
-  tags=["gfx", "scope:sharedCanvas"],
-  callback=handle_message
-)
+listener = enoPlasmiteListener(poolName="grObjPool", tags=["gfx", "scope:sharedCanvas"],
+  callback=handleMsg)
 
 listener.start()
 
