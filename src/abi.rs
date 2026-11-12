@@ -43,6 +43,21 @@ pub struct plsm_stream {
 }
 
 #[repr(C)]
+pub struct plsm_pool_bounds_t { // Gemini generated, per BAU request
+    pub oldest_seq: u64,
+    pub has_oldest: u8, // 1 if present, 0 if None
+    pub newest_seq: u64,
+    pub has_newest: u8,
+}
+
+#[repr(C)]
+pub struct plsm_pool_info_t { // Gemini generated, per BAU request
+    pub path: *mut std::os::raw::c_char,
+    pub file_size: u64,
+    pub bounds: plsm_pool_bounds_t,
+}
+
+#[repr(C)]
 pub struct plsm_lite3_stream {
     pool: Pool,
     state: Mutex<TailState>,
