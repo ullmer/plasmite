@@ -1094,7 +1094,7 @@ pub extern "C" fn plsm_error_free(err: *mut plsm_error) {
 pub unsafe extern "C" fn plsm_pool_info(
     pool: *mut crate::core::pool::Pool,
     out_info: *mut *mut plsm_pool_info_t,
-    out_err: *mut *mut plsm_error_t,
+    out_err: *mut *mut plsm_error,
 ) -> c_int {
     if pool.is_null() || out_info.is_null() {
         return -1; // Or set usage error
@@ -1105,7 +1105,7 @@ pub unsafe extern "C" fn plsm_pool_info(
         Ok(info) => info,
         Err(err) => {
             if !out_err.is_null() {
-                *out_err = Box::into_raw(Box::new(plsm_error_t::from(err)));
+                *out_err = Box::into_raw(Box::new(plsm_error::from(err)));
             }
             return err.kind() as c_int;
         }
