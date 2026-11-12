@@ -1089,6 +1089,59 @@ pub extern "C" fn plsm_error_free(err: *mut plsm_error) {
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn plsm_pool_info(
+    pool: *mut crate::core::pool::Pool,
+    out_info: *mut *mut plsm_pool_info_t,
+    out_err: *mut *mut plsm_error_t,
+) -> c_int {
+    if pool.is_null() || out_info.is_null() {
+        return -1; // Or set usage error
+    }
+    let pool_ref = &*pool;
+
+    let info_res = match pool_ref.info() {
+        Ok(info) => info,
+        Err(err) => {
+            if !out_err.is_null() {
+                *out_err = Box::into_raw(Box::new(plsm_error_t::from(err)));
+            }
+            return err.kind() as c_int;
+        }
+    };
+
+    let path_CString = match CString::new(info_res.path.to_string_lossy.as_bytes()) {
+        Ok(c) => c.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    };
+
+    let bounds = plsm_pool_bounds_t {
+        oldest_seq: info_res.bounds.oldest_seq.unwrap_or(0),
+        has_oldest: info_res.bounds.oldest_seq.is_some() as u8,
+        newest_seq: info_res.bounds.newest_seq.unwrap_or(0),
+        has_newest: info_res.bounds.newest_seq.is_some() as u8,
+    };
+
+    let info_struct = Box::into_raw(Box::new(plsm_pool_info_t {
+        path: path_CString,
+        file_size: info_res.file_size,
+        bounds,
+    }));
+
+    *out_info = info_struct;
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn plsm_pool_info_free(info: *mut plsm_pool_info_t) {
+    if !info.is_null() {
+        let boxed = Box::from_raw(info);
+        if !boxed.path.is_null() {
+            let _ = CString::from_raw(boxed.path);
+        }
+    }
+}
+
 fn parse_stream_options(
     options: *const plsm_stream_options,
     out_err: *mut *mut plsm_error,
