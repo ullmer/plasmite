@@ -48,8 +48,11 @@ class enoPlasmiteListener:
       try:    client    = Client(self.dataPath)
       except: self.logErr("_listen: problem creating client:"); return 
 
-      try:    pool      = client.open_pool(self.poolName) 
-      except: self.logErr("_listen: err creating pool " + self.poolName); return 
+      try:    pool = client.open_pool(self.poolName) 
+      except: 
+         try: pool = client.create_pool(self.poolName, 4 * 1024 * 1024)
+         except: self.logErr("_listen: err creating pool " + self.poolName); return 
+
       self.pool = pool
       self.logger.info(f"Connected to pool {self.poolName}")
       self.ready.set()
