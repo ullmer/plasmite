@@ -30,10 +30,15 @@ class enoPlasmiteListener:
     logging.basicConfig(level=logging.INFO)
     self.logger = logging.getLogger(__name__)
 
-  ########### constructor ###########
+  ########### log error ###########
   def logErr(self, msg):
     try:    self.logger.error(msg); traceback.print_exc()
     except: print("logErr error:"); traceback.print_exc()
+
+  ########### log info ###########
+  def logInf(self, msg):
+    try:    self.logger.info(msg)
+    except: print("logInf error:"); traceback.print_exc()
 
   ########### _listen ###########
   def _listen(self):
@@ -45,8 +50,7 @@ class enoPlasmiteListener:
       except: self.logErr("_listen: problem creating client:"); return 
 
       try:    pool      = client.open_pool(self.poolName) 
-      except: self.logErr("_listen: problem creating pool:"); return 
-
+      except: self.logErr("_listen: err creating pool " + self.poolName); return 
       self.pool = pool
       self.logger.info(f"Connected to pool {self.poolName}")
       self.ready.set()
