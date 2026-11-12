@@ -8,6 +8,7 @@ Begun 2026-11-11
 import threading
 import logging
 import traceback
+import json
 
 from plasmite import Client
 
@@ -60,7 +61,11 @@ class enoPlasmiteListener:
       for msg in pool.tail(timeout_ms=None, tags=self.tags):
         if not self.running: break
         try:
-          if self.callback: self.callback(msg)
+          if self.callback: 
+            if isinstance(msg, bytes):
+              msg = msg.decode("utf-8")
+              obj = json.loads(msg)
+              self.callback(obj)
         except Exception: traceback.print_exc()
 
     except Exception:
