@@ -1090,7 +1090,7 @@ pub extern "C" fn plsm_error_free(err: *mut plsm_error) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn plsm_pool_info(
     pool: *mut crate::core::pool::Pool,
     out_info: *mut *mut plsm_pool_info_t,
@@ -1133,7 +1133,7 @@ pub unsafe extern "C" fn plsm_pool_info(
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn plsm_pool_info_free(info: *mut plsm_pool_info_t) {
     if !info.is_null() {
         let boxed = Box::from_raw(info);
