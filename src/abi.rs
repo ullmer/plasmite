@@ -1091,7 +1091,7 @@ pub extern "C" fn plsm_error_free(err: *mut plsm_error) {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn plsm_pool_info(
+pub unsafe extern "C" fn plsm_pool_info( //Gemini-generated, per BAU request
     pool: *mut crate::core::pool::Pool,
     out_info: *mut *mut plsm_pool_info_t,
     out_err: *mut *mut plsm_error,
@@ -1105,13 +1105,14 @@ pub unsafe extern "C" fn plsm_pool_info(
         Ok(info) => info,
         Err(err) => {
             if !out_err.is_null() {
-                *out_err = Box::into_raw(Box::new(plsm_error::from(err)));
+                //*out_err = Box::into_raw(Box::new(plsm_error::from(err)));  
+                return fail(out_err, err);
             }
             return err.kind() as c_int;
         }
     };
 
-    let path_CString = match CString::new(info_res.path.to_string_lossy.as_bytes()) {
+    let path_CString = match CString::new(info_res.path.to_string_lossy().as_bytes()) {
         Ok(c) => c.into_raw(),
         Err(_) => std::ptr::null_mut(),
     };
@@ -1134,7 +1135,7 @@ pub unsafe extern "C" fn plsm_pool_info(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn plsm_pool_info_free(info: *mut plsm_pool_info_t) {
+pub unsafe extern "C" fn plsm_pool_info_free(info: *mut plsm_pool_info_t) { // Gemini-generated, per BAU request
     if !info.is_null() {
         let boxed = Box::from_raw(info);
         if !boxed.path.is_null() {
