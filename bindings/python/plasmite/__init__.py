@@ -946,12 +946,13 @@ class Pool:
         error_on_gap: bool = False,
         cancel: Event | None = None,
         from_latest: bool = False,  # Gemini generated, per BAU request
+        live_only:   bool = False,    # Added to support live-only streaming
     ) -> Generator[Message, None, None]:
         """Tail JSON messages and optionally filter by exact tags."""
         if max_messages == 0:
             return
 
-        if from_latest and since_seq is None: #Gemini-generated, per BAU request
+        if (from_latest or live_only) and since_seq is None: #Gemini-generated, per BAU request
             try:
                 pool_info = self.info()
                 if pool_info.bounds.newest_seq is not None:
