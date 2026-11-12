@@ -81,30 +81,22 @@ class enoPlasmiteListener:
 
   def stop(self):
     self.running = False
-
     if self.thread:
       self.thread.join(timeout=1.0)
-
     self.logger.info("enoPlasmiteListener stopped")
 
-  #### append ####
+  ########### append ###########
 
   def append(self, data, tags=None, durability=None):
-
     with Client(self.dataPath) as client:
-
       with client.open_pool(self.poolName) as pool:
-
         if durability is None:
           return pool.append(data, tags or [])
-
         return pool.append(data, tags or [], durability)
-
 
 ################ test harness ################
 
 def handle_message(msg):
-
   print("seq :", msg.seq)
   print("tags:", msg.tags)
   print("data:", msg.data)
@@ -121,10 +113,7 @@ if __name__ == "__main__":
   listener.start()
 
   try:
-    while True:
-      threading.Event().wait(1.0)
-
-  except KeyboardInterrupt:
-    listener.stop()
+    while True: threading.Event().wait(1.0)
+  except KeyboardInterrupt: listener.stop()
 
 ### end ###

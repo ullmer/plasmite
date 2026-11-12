@@ -8,8 +8,8 @@ import time
 import sys
 
 def handleMsg(msg):
+  print("\ndir:", dir(msg))
   #print("SEQ :", msg.seq)
-  #print("dir:", dir(msg))
   #print("DATA:", msg.data)
   print("\nmsg:", str(msg))
 
