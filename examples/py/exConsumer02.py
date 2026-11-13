@@ -1,6 +1,6 @@
 import json
 from plasmite import Client, parse_message
-from types import SimpleNamespace
+from types    import SimpleNamespace
 
 def parse_message(raw):
   msg = raw.decode("utf-8")
@@ -16,6 +16,5 @@ with Client("./data") as client:
     for m in stream:
       msg = parse_message(m.raw)
       print(msg)
-      #print(raw)
 
 ### end ###

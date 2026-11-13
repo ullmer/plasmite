@@ -64,8 +64,8 @@ class enoPlasmiteListener:
         try:
           if self.callback: 
             if isinstance(msg, bytes):
-              msg = msg.decode("utf-8")
-              obj = json.loads(msg, object_hook=lambda d: SimpleNamespace(**d))
+              mrd = msg.raw.decode("utf-8")
+              obj = json.loads(mrd, object_hook=lambda d: SimpleNamespace(**d))
               self.callback(obj)
         except Exception: traceback.print_exc()
 
