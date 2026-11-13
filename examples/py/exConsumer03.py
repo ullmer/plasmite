@@ -13,6 +13,7 @@ def handleMsg(msg):
 
 listener = enoPlasmiteListener(poolName="grObjPool", tags=["gfx", "scope:sharedCanvas"],
   callback=handleMsg)
+#  callback=handleMsg, live_only=True)
 
 listener.start()
 
