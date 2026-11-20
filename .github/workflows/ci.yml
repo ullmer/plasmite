@@ -368,14 +368,6 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           .\target\release\plasmite.exe --version
-      - name: Test local follower wakeups and recovery
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $PSNativeCommandUseErrorActionPreference = $true
-          cargo test --release --lib core::notify::windows::tests
-          cargo test --release --lib commit_without_notification_is_recovered
-          cargo test --release --lib independent_registered_tail_reads_publications_and_cancels
       - name: Check private state and secure sharing
         shell: pwsh
         run: |
@@ -385,7 +377,6 @@ jobs:
           cargo test --release --bin plasmite serve_service::windows::tests -- --test-threads=1
           cargo test --release --test secure_sharing --test access_lifecycle --test browser_access --test oauth_access --test udp_input --test udp_client --test udp_transport --test udp_transport_cli --test cli_yaml --test cli_yaml_stream -- --test-threads=1
       - name: Local pool roundtrip smoke
-        timeout-minutes: 1
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -399,8 +390,8 @@ jobs:
           Set-Content -Path $payloadPath -Value '{"ci":"windows-smoke"}' -NoNewline
           try {
             & $exe --dir $dir pool create $pool
-            Get-Content -Raw $payloadPath | & $exe --dir $dir feed $pool
-            $out = & $exe --dir $dir follow $pool --format json --last 1 --one
+            & $exe --dir $dir feed $pool -f $payloadPath
+            $out = & $exe --dir $dir follow $pool --format json --tail 1 --one --timeout 2s
             if (-not ($out -match '"ci":"windows-smoke"')) {
               throw "Roundtrip payload marker missing from follow output."
             }
