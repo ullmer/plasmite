@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/normalize_sdk_layout.sh"
 PLASMITE_BIN="${PLASMITE_BIN:-${ROOT_DIR}/target/debug/plasmite}"
 WORK_DIR="${ROOT_DIR}/tmp/cookbook-smoke"
 POOL_DIR="${WORK_DIR}/pools"
@@ -95,9 +96,10 @@ pool_dir = home / ".plasmite" / "pools"
 pool_path = pool_dir / "cookbook-home.plasmite"
 
 with Client() as client:
-    with client.pool("cookbook-home", 1024 * 1024) as pool:
-        msg = pool.append({"task": "resize", "id": 1}, ["cookbook"], Durability.FAST)
-        pool.get(msg.seq)
+    with client.open_pool("cookbook-home", create=True) as pool:
+        sent = pool.feed({"task": "resize", "id": 1}, ["cookbook"], Durability.FAST)
+        with pool.fetch(since=sent.seq) as reader:
+            msg = next(reader)
         print(json.dumps({"seq": msg.seq, "tags": msg.tags, "data": msg.data}))
 
 if not pool_path.exists():
@@ -129,52 +131,56 @@ const { Client } = require("./index.js");
 const home = os.homedir();
 const poolPath = path.join(home, ".plasmite", "pools", "cookbook-home.plasmite");
 
-const client = new Client();
-let pool = null;
-try {
-  pool = client.pool("cookbook-home", 1024 * 1024);
-  const msg = pool.append({ task: "resize", id: 1 }, ["cookbook"]);
-  pool.get(msg.seq);
-  process.stdout.write(`${JSON.stringify({ seq: Number(msg.seq), tags: msg.tags, data: msg.data })}\n`);
-} finally {
-  if (pool) {
-    pool.close();
+(async () => {
+  const client = new Client();
+  let pool;
+  try {
+    pool = client.openPool("cookbook-home", { create: true });
+    const sent = await pool.feed({ task: "resize", id: 1 }, { tags: ["cookbook"] });
+    const reader = await pool.fetch({ since: sent.seq });
+    const { value: msg } = await reader.next();
+    await reader.return();
+    process.stdout.write(`${JSON.stringify({ seq: Number(msg.seq), tags: msg.tags, data: msg.data })}\n`);
+  } finally {
+    pool?.close();
+    client.close();
   }
-  client.close();
-}
-
-if (!fs.existsSync(poolPath)) {
-  throw new Error(`expected pool to exist: ${poolPath}`);
-}
+  if (!fs.existsSync(poolPath)) throw new Error(`expected pool to exist: ${poolPath}`);
+})().catch(error => { console.error(error); process.exitCode = 1; });
 NODE
   )
   assert_jq_true "${node_home_out}" '.data.task == "resize"' "Node fresh HOME fixture"
   assert_jq_true "${node_home_out}" '.tags == ["cookbook"]' "Node fresh HOME fixture"
 
   local go_cache="${GOCACHE:-${WORK_DIR}/go-cache}"
+  local sdk_dir
+  sdk_dir="$(plasmite_normalize_sdk_dir "${ROOT_DIR}/target/debug" "${WORK_DIR}/sdk" "cookbook SDK")"
   mkdir -p "${go_cache}" "${WORK_DIR}/go-tmp"
   (
     cd "${ROOT_DIR}/bindings/go" && \
       GOCACHE="${go_cache}" \
       GOTMPDIR="${WORK_DIR}/go-tmp" \
-      PLASMITE_LIB_DIR="${ROOT_DIR}/target/debug" \
-      LD_LIBRARY_PATH="${ROOT_DIR}/target/debug:${LD_LIBRARY_PATH:-}" \
-      DYLD_FALLBACK_LIBRARY_PATH="${ROOT_DIR}/target/debug:${DYLD_FALLBACK_LIBRARY_PATH:-}" \
+      PLASMITE_LIB_DIR="${sdk_dir}/lib" \
+      LD_LIBRARY_PATH="${sdk_dir}/lib:${LD_LIBRARY_PATH:-}" \
+      DYLD_LIBRARY_PATH="${sdk_dir}/lib:${DYLD_LIBRARY_PATH:-}" \
       PKG_CONFIG="/usr/bin/true" \
       CGO_CFLAGS="-I${ROOT_DIR}/include" \
-      CGO_LDFLAGS="-L${ROOT_DIR}/target/debug" \
+      CGO_LDFLAGS="-L${sdk_dir}/lib" \
       go run ./cmd/cookbook-smoke-fixture "${fixtures_dir}/go-pools"
   ) >"${go_out}"
   assert_jq_true "${go_out}" '.data.task == "resize"' "Go cookbook fixture"
   assert_jq_true "${go_out}" '.tags == ["cookbook"]' "Go cookbook fixture"
 }
 
+# Print a free localhost port for TCP or UDP (the first argument).
 pick_port() {
-  python3 - <<'PY'
+  python3 - "$1" <<'PY'
 import socket
+import sys
 
+kind = socket.SOCK_DGRAM if sys.argv[1] == "udp" else socket.SOCK_STREAM
 for port in range(9700, 9800):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    with socket.socket(socket.AF_INET, kind) as sock:
         try:
             sock.bind(("127.0.0.1", port))
             print(port)
@@ -195,90 +201,118 @@ if ! compgen -G "${ROOT_DIR}/target/debug/libplasmite.{dylib,so}" >/dev/null; th
   echo "building libplasmite (cdylib)..."
   (cd "${ROOT_DIR}" && cargo build -q --lib)
 fi
+bash "${ROOT_DIR}/scripts/stage_versioned_library.sh" "${ROOT_DIR}/target/debug"
 
 rm -rf "${WORK_DIR}"
 mkdir -p "${POOL_DIR}"
 
-# Produce & Consume
-produce_out="${WORK_DIR}/produce_consume.jsonl"
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed work --create '{"task":"resize","id":1}' >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" follow work --tail 1 --one >"${produce_out}"
-assert_contains "${produce_out}" '"task":"resize"' "Produce & Consume"
+# Each block below runs the matching docs/cookbook.md recipe against a scratch pool directory.
+plasmite() { "${PLASMITE_BIN}" --dir "${POOL_DIR}" "$@"; }
+cd "${WORK_DIR}"
 
-# CI Gate
-ci_out="${WORK_DIR}/ci_gate_follow.jsonl"
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" pool create ci >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed ci '{"status":"green","commit":"a1b2c3","suite":"unit"}' >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" follow ci --where '.data.status == "green"' --tail 1 --one >"${ci_out}"
-assert_contains "${ci_out}" '"status":"green"' "CI Gate"
+# Log events and watch them
+plasmite feed builds --create '{"step": "compile", "status": "ok"}' >/dev/null
+plasmite feed builds '{"step": "test", "status": "failed"}' >/dev/null
+plasmite follow builds --last 10 | head -2 >log_follow.jsonl
+assert_line_count_at_least log_follow.jsonl 2 "Log events and watch them"
+plasmite fetch builds --since 1h >log_fetch.jsonl
+assert_contains log_fetch.jsonl '"status":"failed"' "Log events and watch them"
 
-# Live Build Progress
-build_out="${WORK_DIR}/live_build_follow.jsonl"
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" pool create build >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed build '{"step":"compile","pct":0}' >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed build '{"step":"compile","pct":100}' >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed build '{"step":"test","pct":0}' >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed build '{"step":"test","pct":100}' >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed build '{"step":"finished","ok":true}' --tag done >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" follow build --tag done --tail 1 --one >"${build_out}"
-assert_contains "${build_out}" '"ok":true' "Live Build Progress"
+# Gate a deploy on CI: the test job finishes before the deploy job starts waiting.
+CI_RUN_ID=smoke
+plasmite feed "ci-$CI_RUN_ID" --create --tag ok '{"step": "test", "status": "ok"}' >/dev/null
+plasmite follow "ci-$CI_RUN_ID" --create --since oldest --tag ok --one >/dev/null && echo deployed >ci_gate.txt
+assert_contains ci_gate.txt deployed "Gate a deploy on CI"
 
-# Multi-Writer Event Bus
-multi_out="${WORK_DIR}/multi_writer_follow.jsonl"
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" pool create events >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed events '{"service":"api","sha":"f4e5d6"}' --tag deploy >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed events '{"service":"api","msg":"latency spike"}' --tag alert >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed events '{"service":"web","rps":1420}' --tag metric >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" follow events --tag alert --tail 3 --no-follow >"${multi_out}"
-assert_contains "${multi_out}" '"msg":"latency spike"' "Multi-Writer Event Bus"
+# Capture command output
+printf 'compiling\n\nwarning: unused variable' | plasmite feed captured --create --input-format lines >/dev/null
+plasmite fetch captured --last 10 >captured.jsonl
+assert_line_count_at_least captured.jsonl 3 "Capture command output"
+assert_contains captured.jsonl '"line":"warning: unused variable"' "Capture command output"
 
-# Replay & Debug
-replay_out="${WORK_DIR}/replay.jsonl"
-replay_filter_out="${WORK_DIR}/replay_debug.jsonl"
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" pool create incidents >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed incidents '{"level":"info","msg":"booting"}' >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" feed incidents '{"level":"error","msg":"latency spike"}' >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" follow incidents --replay 0 --since 1m >"${replay_out}"
-assert_line_count_at_least "${replay_out}" 2 "Replay & Debug"
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" follow incidents --where '.data.level == "error"' --tail 1 --one >"${replay_filter_out}"
-assert_contains "${replay_filter_out}" '"level":"error"' "Replay & Debug"
-assert_file_non_empty "${replay_filter_out}" "Replay & Debug"
+# Let several programs write to one pool
+plasmite feed events --create --tag deploy '{"service": "api", "sha": "f4e5d6c"}' >/dev/null
+plasmite feed events --tag error '{"service": "api", "msg": "latency spike"}' >/dev/null
+plasmite feed events --tag metric '{"service": "web", "rps": 1420}' >/dev/null
+plasmite feed events --tag deploy --tag api '{"service": "api", "sha": "a1b2c3d"}' >/dev/null
+plasmite follow events --since oldest --tag error --one >writers.jsonl
+assert_contains writers.jsonl '"msg":"latency spike"' "Let several programs write to one pool"
 
-# Remote Pool Access
-remote_port="$(pick_port)"
-if [[ -z "${remote_port}" ]]; then
-  fail "could not allocate a free localhost port"
+# Read only the messages you need
+plasmite fetch events --since 1h --tag deploy --tag api >tags.jsonl
+assert_contains tags.jsonl '"sha":"a1b2c3d"' "Read only the messages you need"
+if grep -qF 'f4e5d6c' tags.jsonl; then fail "Read only the messages you need: --tag must require every tag"; fi
+plasmite fetch events --last 100 | jq -c 'select(.data.service == "api")' >jq_filter.jsonl
+assert_line_count_at_least jq_filter.jsonl 3 "Read only the messages you need"
+
+# Resume after a restart: the pool wraps before the first run, so follow reports a gap.
+plasmite pool create sensors --size 64K >/dev/null
+for i in $(seq 1 300); do echo "{\"temp_c\": 21.4, \"sample\": $i}"; done | plasmite feed sensors >/dev/null
+resume_once() {
+  next=$(cat sensors.next 2>/dev/null || echo 1)
+  plasmite follow sensors --since "$next" 2>>resume.err | head -2 | while read -r msg; do
+    jq -c .data <<<"$msg"
+    jq '.seq + 1' <<<"$msg" > sensors.next
+  done
+}
+resume_once >resume1.jsonl
+assert_contains resume.err '"kind":"RetentionGap"' "Resume after a restart"
+first_next="$(cat sensors.next)"
+resume_once >resume2.jsonl
+[[ "$(cat sensors.next)" -eq $((first_next + 2)) ]] || fail "Resume after a restart: checkpoint did not advance"
+
+# Save history to a file and replay it
+plasmite fetch events --since 1h > incident.jsonl
+plasmite feed replay --create < incident.jsonl >/dev/null
+plasmite fetch replay --tag error >replayed.jsonl
+assert_contains replayed.jsonl '"msg":"latency spike"' "Save history to a file and replay it"
+
+# Chat between two terminals
+printf '{"from": "ana", "text": "hi"}\n' | plasmite duplex chat --create --last 20 | head -1 >chat.jsonl
+assert_contains chat.jsonl '"text":"hi"' "Chat between two terminals"
+
+# Share a pool with a teammate and collect sensor readings over UDP.
+# The smoke test uses the server's credential-free loopback listener in place of an access key.
+http_port="$(pick_port tcp)"
+udp_port="$(pick_port udp)"
+if [[ -z "${http_port}" || -z "${udp_port}" ]]; then
+  fail "could not allocate free localhost ports"
 fi
-remote_url="http://127.0.0.1:${remote_port}"
-remote_follow_out="${WORK_DIR}/remote_follow.jsonl"
-
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" pool create remote-events >/dev/null
-"${PLASMITE_BIN}" --dir "${POOL_DIR}" serve --bind "127.0.0.1:${remote_port}" --remote-bind 127.0.0.1:0 >"${WORK_DIR}/remote-serve.log" 2>&1 &
+plasmite serve --bind "127.0.0.1:${http_port}" --remote-bind 127.0.0.1:0 \
+  --udp="127.0.0.1:${udp_port}" --udp-follow >serve.log 2>&1 &
 SERVE_PID=$!
 
+server_url="http://127.0.0.1:${http_port}"
 for _ in $(seq 1 60); do
-  if curl -fsS "${remote_url}/healthz" >/dev/null; then
-    remote_ready=true
+  if curl -fsS "${server_url}/healthz" >/dev/null 2>&1; then
+    server_ready=true
     break
   fi
   sleep 0.05
 done
-
-if [[ "${remote_ready:-false}" != true ]]; then
-  fail "remote server was not ready after startup wait"
+if [[ "${server_ready:-false}" != true ]] || ! kill -0 "${SERVE_PID}" 2>/dev/null; then
+  fail "server was not ready after startup wait"
 fi
 
-if ! kill -0 "${SERVE_PID}" 2>/dev/null; then
-  fail "remote server exited before readiness checks completed"
-fi
+plasmite follow "${server_url}/builds" --last 20 | head -1 >remote.jsonl
+assert_contains remote.jsonl '"step":"compile"' "Share a pool with a teammate"
 
-"${PLASMITE_BIN}" feed "${remote_url}/remote-events" '{"sensor":"temp","value":23.5}' >/dev/null
-"${PLASMITE_BIN}" follow "${remote_url}/remote-events" --tail 1 --one >"${remote_follow_out}"
-assert_contains "${remote_follow_out}" '"sensor":"temp"' "Remote Pool Access"
+plasmite feed "udp://127.0.0.1:${udp_port}/sensors" --tag sensor '{"temp_c": 21.4}' 2>/dev/null
+for _ in $(seq 1 60); do
+  if plasmite fetch sensors --tag sensor | grep -qF '"temp_c":21.4'; then
+    udp_stored=true
+    break
+  fi
+  sleep 0.05
+done
+[[ "${udp_stored:-false}" == true ]] || fail "Collect sensor readings over UDP: reading was not stored"
+plasmite follow "udp://127.0.0.1:${udp_port}/sensors" --last 1 --one >udp.jsonl
+assert_contains udp.jsonl '"tags":["sensor"]' "Collect sensor readings over UDP"
 
 kill "${SERVE_PID}"
-wait "${SERVE_PID}"
+wait "${SERVE_PID}" 2>/dev/null || true
 SERVE_PID=""
+cd "${ROOT_DIR}"
 
 run_binding_fixtures
 

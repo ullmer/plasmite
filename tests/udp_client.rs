@@ -1,8 +1,13 @@
 use plasmite::api::{
-    ErrorKind, PoolRef, UdpClient, UdpEvent, UdpFollowOptions, UdpSkipReason, UdpStart, lite3,
+    ErrorKind, Feed, PoolRef, Read, Since, UdpClient, UdpEvent, UdpSkipReason, lite3,
 };
 use serde_json::{Value, json};
 use std::net::UdpSocket;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc,
+};
 use std::thread;
 use std::time::Duration;
 
@@ -59,14 +64,15 @@ fn sends_complete_routed_lite3_datagrams_and_checks_both_sizes() {
     let tags = vec!["lab".to_string()];
     let expected = lite3::encode_message(&tags, &data).expect("encode");
 
-    pool.send_json(&data, &tags).expect("send json message");
+    pool.feed(&data, Feed::new().tags(tags))
+        .expect("send json message");
     let mut received = [0u8; 65_507];
     let (length, _) = peer.recv_from(&mut received).expect("receive json message");
     let mut expected_packet = b"sensors\0".to_vec();
     expected_packet.extend_from_slice(expected.as_slice());
     assert_eq!(&received[..length], expected_packet);
 
-    pool.send_lite3(expected.as_slice())
+    pool.feed_lite3(expected.as_slice(), Feed::new())
         .expect("send Lite3 message");
     let (length, _) = peer
         .recv_from(&mut received)
@@ -74,18 +80,48 @@ fn sends_complete_routed_lite3_datagrams_and_checks_both_sizes() {
     assert_eq!(&received[..length], expected_packet);
 
     let oversized = vec![0; 65_468];
-    let error = pool.send_lite3(&oversized).expect_err("oversized payload");
+    let error = pool
+        .feed_lite3(&oversized, Feed::new())
+        .expect_err("oversized payload");
     assert_eq!(error.kind(), ErrorKind::Usage);
     assert!(error.message().unwrap_or_default().contains("65508"));
 
     let uri_pool = client
         .open_pool(&PoolRef::uri(format!("udp://{endpoint}/sensors")))
         .expect("same endpoint URL");
-    assert!(uri_pool.send_lite3(&[0]).is_err());
+    assert!(uri_pool.feed_lite3(&[0], Feed::new()).is_err());
 }
 
 #[test]
-fn follows_arrival_order_across_progress_skips_duplicates_and_timestamp_filters() {
+fn cancellation_during_udp_handshake_finishes_without_peer_response() {
+    let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let client = UdpClient::new(format!("udp://{}", peer.local_addr().unwrap())).unwrap();
+    let pool = client.open_pool(&PoolRef::name("sensors")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let read = Read::new().cancel(cancel.clone());
+    let (send, result) = mpsc::channel();
+    let opening = thread::spawn(move || {
+        let outcome = pool.follow(read).map(|follow| follow.is_finished());
+        send.send(outcome).unwrap();
+    });
+
+    let mut packet = [0; 1024];
+    let (size, _) = peer.recv_from(&mut packet).unwrap();
+    assert!(size >= HEADER);
+    assert_eq!(packet[6], SUBSCRIBE);
+    cancel.store(true, Ordering::Release);
+    assert!(
+        result
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap()
+    );
+    opening.join().unwrap();
+}
+
+#[test]
+fn follows_arrival_order_across_progress_skips_duplicates_and_clock_steps() {
     let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
     let endpoint = peer.local_addr().unwrap();
     let timestamp = 1_700_000_000_000_000_000u64;
@@ -129,23 +165,18 @@ fn follows_arrival_order_across_progress_skips_duplicates_and_timestamp_filters(
         for seq in [12, 11, 12] {
             send_data(seq, timestamp);
         }
-        send_data(13, timestamp - 1); // The requested timestamp filter still applies.
+        send_data(13, timestamp - 1); // Time can step back after the starting record.
         peer.send_to(&progress(21), address).unwrap();
     });
     let pool = UdpClient::new(format!("udp://{endpoint}"))
         .unwrap()
         .open_pool(&PoolRef::name("sensors"))
         .unwrap();
-    let mut follow = pool
-        .follow(UdpFollowOptions {
-            start: UdpStart::Since(timestamp),
-            live: true,
-        })
-        .unwrap();
+    let mut follow = pool.follow(Read::since(Since::At(timestamp))).unwrap();
     let mut sequences = Vec::new();
     let mut progress = Vec::new();
     let mut skips = Vec::new();
-    for _ in 0..8 {
+    for _ in 0..9 {
         match follow
             .next_event_timeout(Duration::from_secs(1))
             .unwrap()
@@ -153,14 +184,21 @@ fn follows_arrival_order_across_progress_skips_duplicates_and_timestamp_filters(
         {
             UdpEvent::Frame(frame) => {
                 sequences.push(frame.seq);
-                assert_eq!(frame.timestamp_ns, timestamp);
+                assert_eq!(
+                    frame.time,
+                    if frame.seq == 13 {
+                        timestamp - 1
+                    } else {
+                        timestamp
+                    }
+                );
                 assert_eq!(frame.payload, original);
                 let message = frame.message().unwrap();
                 assert_eq!(message.seq, frame.seq);
                 assert_eq!(message.meta.tags, ["lab"]);
                 assert_eq!(message.data, json!({"temperature": 23}));
             }
-            UdpEvent::Gap {
+            UdpEvent::Skip {
                 first,
                 last,
                 reason,
@@ -168,7 +206,7 @@ fn follows_arrival_order_across_progress_skips_duplicates_and_timestamp_filters(
             UdpEvent::Progress { next_seq, .. } => progress.push(next_seq),
         }
     }
-    assert_eq!(sequences, [10, 12, 11, 12]);
+    assert_eq!(sequences, [10, 12, 11, 12, 13]);
     assert_eq!(progress, [20, 11, 21]);
     assert_eq!(skips, [(11, 11, UdpSkipReason::Pressure)]);
     assert!(
@@ -215,12 +253,7 @@ fn finite_terminal_progress_ends_without_waiting_for_late_data() {
         .unwrap()
         .open_pool(&PoolRef::name("sensors"))
         .unwrap();
-    let mut follow = pool
-        .follow(UdpFollowOptions {
-            start: UdpStart::Last(2),
-            live: false,
-        })
-        .unwrap();
+    let mut follow = pool.fetch(Read::last(2)).unwrap();
     assert!(
         matches!(follow.next_event().unwrap(), Some(UdpEvent::Frame(frame)) if frame.seq == 10)
     );
@@ -271,18 +304,13 @@ fn finite_follow_drains_early_skips_and_terminal_progress_after_close() {
         .unwrap()
         .open_pool(&PoolRef::name("sensors"))
         .unwrap();
-    let mut follow = pool
-        .follow(UdpFollowOptions {
-            start: UdpStart::Last(3),
-            live: false,
-        })
-        .unwrap();
+    let mut follow = pool.fetch(Read::last(3)).unwrap();
     assert!(follow.is_finished(), "SKIP alone must not finish opening");
     follow.close();
     follow.close();
     assert_eq!(
         follow.next_event().unwrap(),
-        Some(UdpEvent::Gap {
+        Some(UdpEvent::Skip {
             first: 2,
             last: 2,
             reason: UdpSkipReason::Oversized
@@ -290,7 +318,7 @@ fn finite_follow_drains_early_skips_and_terminal_progress_after_close() {
     );
     assert_eq!(
         follow.next_event().unwrap(),
-        Some(UdpEvent::Gap {
+        Some(UdpEvent::Skip {
             first: 3,
             last: 3,
             reason: UdpSkipReason::Pressure
@@ -303,7 +331,6 @@ fn finite_follow_drains_early_skips_and_terminal_progress_after_close() {
             next_seq: 5,
             end_seq: Some(4),
             terminal: true,
-            retention_gap: false
         })
     );
     assert_eq!(follow.next_event().unwrap(), None);
@@ -337,12 +364,7 @@ fn follow_rejects_progress_that_changes_the_opening_range() {
         .unwrap()
         .open_pool(&PoolRef::name("sensors"))
         .unwrap();
-    let mut follow = pool
-        .follow(UdpFollowOptions {
-            start: UdpStart::Last(2),
-            live: false,
-        })
-        .unwrap();
+    let mut follow = pool.fetch(Read::last(2)).unwrap();
     let timeout = Duration::from_secs(1);
     assert!(matches!(
         follow.next_event_timeout(timeout).unwrap(),
@@ -421,7 +443,7 @@ fn unknown_skip_reason_is_reserved_in_both_receive_phases() {
             .unwrap()
             .open_pool(&PoolRef::name("events"))
             .unwrap();
-        let result = pool.follow(UdpFollowOptions::new());
+        let result = pool.follow(Read::new());
         let error = if opening {
             result.err().expect("unknown startup skip reason")
         } else {
@@ -435,4 +457,224 @@ fn unknown_skip_reason_is_reserved_in_both_receive_phases() {
         assert_eq!(error.kind(), ErrorKind::Corrupt);
         server.join().unwrap();
     }
+}
+
+#[test]
+fn view_follow_preserves_arrival_order_and_retained_snapshots() {
+    let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let endpoint = peer.local_addr().unwrap();
+    let timestamp = 1_700_000_000_000_000_000u64;
+    let payload = lite3::encode_message(
+        &["lab".into()],
+        &json!({"temperature":23,"exact":i64::MAX,"negative":-0.0,"blob":"native bytes"}),
+    )
+    .unwrap();
+    let data = payload.as_doc().key_offset("data").unwrap();
+    let blob = payload.as_doc().key_offset_at(data, "blob").unwrap();
+    let mut payload = payload.as_slice().to_vec();
+    payload[blob] = lite3::sys::LITE3_TYPE_BYTES;
+    let original = payload.clone();
+    let server = thread::spawn(move || {
+        let (id, address, subscribe) = accept_subscription(&peer);
+        assert_eq!(subscribe["selection"]["start"]["kind"], "since");
+        let send_data = |seq: u64, time: u64| {
+            let mut body = seq.to_be_bytes().to_vec();
+            body.extend_from_slice(&time.to_be_bytes());
+            body.extend_from_slice(&payload);
+            peer.send_to(&packet(DATA, &id, &body), address).unwrap();
+        };
+        let progress = |next| {
+            packet(
+                PROGRESS,
+                &id,
+                &serde_json::to_vec(&json!({
+                    "start_seq": 1, "next_seq": next, "end_seq": null,
+                    "lease_ms": 30_000, "terminal": false
+                }))
+                .unwrap(),
+            )
+        };
+        send_data(10, timestamp); // DATA can open the follow before PROGRESS.
+        peer.send_to(&progress(20), address).unwrap();
+        peer.send_to(
+            &packet(
+                SKIP,
+                &id,
+                &serde_json::to_vec(&json!({
+                    "first": 11, "last": 11, "reason": "pressure"
+                }))
+                .unwrap(),
+            ),
+            address,
+        )
+        .unwrap();
+        peer.send_to(&progress(11), address).unwrap(); // Stale progress is descriptive.
+        for seq in [12, 11, 12] {
+            send_data(seq, timestamp);
+        }
+        send_data(13, timestamp - 1); // Time can step back after the starting record.
+        peer.send_to(&progress(21), address).unwrap();
+    });
+    let pool = UdpClient::new(format!("udp://{endpoint}"))
+        .unwrap()
+        .open_pool(&PoolRef::name("sensors"))
+        .unwrap();
+    let mut follow = pool.follow_view(Read::since(Since::At(timestamp))).unwrap();
+    let mut retained = Vec::new();
+    let mut sequences = Vec::new();
+    let mut progress = Vec::new();
+    let mut skips = Vec::new();
+    for _ in 0..9 {
+        match follow
+            .next_event_timeout(Duration::from_secs(1))
+            .unwrap()
+            .expect("event")
+        {
+            plasmite::api::UdpViewEvent::Frame(frame) => {
+                sequences.push(frame.seq);
+                assert_eq!(
+                    frame.time,
+                    if frame.seq == 13 {
+                        timestamp - 1
+                    } else {
+                        timestamp
+                    }
+                );
+                assert_eq!(frame.bytes(), original);
+                assert_eq!(
+                    frame.data().get("temperature").unwrap().unwrap().integer(),
+                    Some(23)
+                );
+                assert_eq!(
+                    frame
+                        .root()
+                        .get("meta")
+                        .unwrap()
+                        .unwrap()
+                        .get("tags")
+                        .unwrap()
+                        .unwrap()
+                        .index(0)
+                        .unwrap()
+                        .unwrap()
+                        .text(),
+                    Some("lab")
+                );
+                assert_eq!(
+                    frame.data().get("exact").unwrap().unwrap().integer(),
+                    Some(i64::MAX)
+                );
+                assert!(
+                    frame
+                        .data()
+                        .get("negative")
+                        .unwrap()
+                        .unwrap()
+                        .real()
+                        .unwrap()
+                        .is_sign_negative()
+                );
+                let bytes = frame.data().get("blob").unwrap().unwrap();
+                assert_eq!(bytes.kind(), lite3::sys::LITE3_TYPE_BYTES);
+                assert_eq!(bytes.span(), Some(b"native bytes\0".as_slice()));
+                retained.push(frame);
+            }
+            plasmite::api::UdpViewEvent::Skip {
+                first,
+                last,
+                reason,
+            } => skips.push((first, last, reason)),
+            plasmite::api::UdpViewEvent::Progress { next_seq, .. } => progress.push(next_seq),
+        }
+    }
+    assert_eq!(sequences, [10, 12, 11, 12, 13]);
+    assert_eq!(progress, [20, 11, 21]);
+    assert_eq!(skips, [(11, 11, UdpSkipReason::Pressure)]);
+    assert!(
+        follow
+            .next_event_timeout(Duration::from_millis(20))
+            .unwrap()
+            .is_none()
+    );
+    assert!(!follow.is_finished());
+    follow.close();
+    server.join().unwrap();
+    drop(follow);
+    drop(pool);
+    assert_eq!(retained.len(), 5);
+    assert_eq!(
+        retained[0]
+            .data()
+            .get("temperature")
+            .unwrap()
+            .unwrap()
+            .integer(),
+        Some(23)
+    );
+    assert_ne!(retained[0].bytes().as_ptr(), retained[1].bytes().as_ptr());
+}
+
+#[test]
+fn view_follow_ends_at_terminal_progress_without_waiting_for_late_data() {
+    let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let endpoint = peer.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (id, address, _) = accept_subscription(&peer);
+        let payload = lite3::encode_message(&[], &json!({"sample": 1})).unwrap();
+        let data = |seq: u64| {
+            let mut body = seq.to_be_bytes().to_vec();
+            body.extend_from_slice(&1u64.to_be_bytes());
+            body.extend_from_slice(payload.as_slice());
+            packet(DATA, &id, &body)
+        };
+        peer.send_to(&data(10), address).unwrap();
+        peer.send_to(
+            &packet(
+                PROGRESS,
+                &id,
+                &serde_json::to_vec(&json!({
+                    "start_seq": 10, "next_seq": 12, "end_seq": 11,
+                    "lease_ms": 30_000, "terminal": true
+                }))
+                .unwrap(),
+            ),
+            address,
+        )
+        .unwrap();
+        peer.send_to(&data(11), address).unwrap();
+    });
+    let pool = UdpClient::new(format!("udp://{endpoint}"))
+        .unwrap()
+        .open_pool(&PoolRef::name("sensors"))
+        .unwrap();
+    let mut follow = pool.fetch_view(Read::last(2)).unwrap();
+    assert!(
+        matches!(follow.next_event().unwrap(), Some(plasmite::api::UdpViewEvent::Frame(frame)) if frame.seq == 10)
+    );
+    assert!(matches!(
+        follow.next_event().unwrap(),
+        Some(plasmite::api::UdpViewEvent::Progress { terminal: true, .. })
+    ));
+    assert!(follow.next_event().unwrap().is_none());
+    server.join().unwrap();
+}
+
+#[test]
+fn view_follow_rejects_malformed_data_before_exposure() {
+    let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let endpoint = peer.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (id, address, _) = accept_subscription(&peer);
+        let invalid = lite3::Lite3Buf::from_json_str(r#"{"meta":{"tags":[7]},"data":{}}"#).unwrap();
+        let mut body = 1u64.to_be_bytes().to_vec();
+        body.extend_from_slice(&2u64.to_be_bytes());
+        body.extend_from_slice(invalid.as_slice());
+        peer.send_to(&packet(DATA, &id, &body), address).unwrap();
+    });
+    let pool = UdpClient::new(format!("udp://{endpoint}"))
+        .unwrap()
+        .open_pool(&PoolRef::name("sensors"))
+        .unwrap();
+    assert!(matches!(pool.follow_view(Read::new()),Err(error) if error.kind()==ErrorKind::Corrupt));
+    server.join().unwrap();
 }

@@ -1,27 +1,78 @@
-//! Purpose: Provide best-effort per-pool notifications via named semaphores.
-//! Exports: `PoolSemaphore`, `NotifyError`, `WaitOutcome`, `pool_semaphore_name`, `post_for_path`.
-//! Role: Optimization for tail-style consumers; correctness must not depend on notify.
-//! Invariants: Name derivation is deterministic; failures never panic or block progress.
-//! Invariants: Unsupported semaphore operations surface as `NotifyError::Unavailable`.
+//! Best-effort local pool notifications. Readers always verify committed
+//! storage and their own position after a wake-up or a timeout.
 
-use sha2::{Digest, Sha256};
 use std::io;
-use std::path::Path;
+use std::sync::Arc;
 #[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+use std::sync::atomic::AtomicU32;
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 use std::time::Duration;
 
-#[cfg(unix)]
-use std::ffi::CString;
-#[cfg(unix)]
-use std::time::SystemTime;
+#[cfg(target_os = "linux")]
+pub(crate) mod linux;
+#[cfg(windows)]
+pub(crate) mod windows;
 
-#[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
+#[cfg(any(target_os = "linux", windows))]
+pub(crate) const FLAG_CHECK: Duration = Duration::from_millis(50);
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub(crate) const RECOVERY_CHECK: Duration = Duration::from_secs(1);
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub(crate) const ARMED: u32 = 1u32.to_le();
+
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub(crate) fn publish(word: &AtomicU32, sequence: u64) -> bool {
+    // One bit covers every sleeper. A departing reader can leave at most
+    // one extra wake for the next writer.
+    word.swap(((sequence as u32) << 1).to_le(), Ordering::AcqRel) & ARMED != 0
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub(crate) fn arm(word: &AtomicU32) -> Option<u32> {
+    let before = word.load(Ordering::Acquire);
+    let armed = before | ARMED;
+    if before != armed {
+        word.compare_exchange(before, armed, Ordering::AcqRel, Ordering::Acquire)
+            .ok()?;
+    }
+    Some(armed)
+}
+
+/// Bindings own the cancellation operation, so they can wake a parked local
+/// reader. The flag also serves remote readers and older notification backends.
+#[derive(Debug, Default)]
+pub(crate) struct CancelSignal {
+    flag: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(target_os = "linux")]
+    event: std::sync::atomic::AtomicU32,
+    #[cfg(windows)]
+    event: std::sync::OnceLock<Option<std::os::windows::io::OwnedHandle>>,
+}
+
+impl CancelSignal {
+    pub(crate) fn flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        Arc::clone(&self.flag)
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.flag.store(true, Ordering::Release);
+        #[cfg(target_os = "linux")]
+        linux::cancel(&self.event);
+        #[cfg(windows)]
+        if let Some(event) = self.event.get_or_init(windows::cancel_event) {
+            windows::signal(event);
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 // The polling fallback keeps this shared result type but cannot produce semaphore events.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
 pub(crate) enum WaitOutcome {
     Signaled,
     TimedOut,
@@ -30,155 +81,72 @@ pub(crate) enum WaitOutcome {
 #[derive(Debug)]
 pub(crate) enum NotifyError {
     Unavailable,
-    // Only the Unix semaphore backend reports operating-system errors.
-    #[cfg_attr(not(unix), allow(dead_code))]
+    // Native Unix notification operations can report operating-system errors.
+    #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
     Io(io::Error),
 }
 
-pub(crate) trait SemaphoreBackend: Clone {
-    type Handle;
-
-    fn open(&self, name: &str) -> Result<Self::Handle, NotifyError>;
-    fn post(&self, handle: &Self::Handle) -> Result<(), NotifyError>;
-    fn wait(&self, handle: &Self::Handle, timeout: Duration) -> Result<WaitOutcome, NotifyError>;
-    fn close(&self, handle: &Self::Handle);
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn plasmite_address_wait_available() -> libc::c_int;
+    fn plasmite_address_wait(address: *mut u64, expected: u64, timeout_ns: u64) -> libc::c_int;
+    fn plasmite_address_wake_all(address: *mut u64) -> libc::c_int;
 }
 
-#[derive(Clone)]
-pub(crate) struct Semaphore<B: SemaphoreBackend> {
-    handle: B::Handle,
-    backend: B,
-}
-
-impl<B: SemaphoreBackend> Semaphore<B> {
-    fn open_with_backend(name: String, backend: B) -> Result<Self, NotifyError> {
-        let handle = backend.open(&name)?;
-        Ok(Self { handle, backend })
-    }
-
-    pub(crate) fn post(&self) -> Result<(), NotifyError> {
-        self.backend.post(&self.handle)
-    }
-
-    pub(crate) fn wait(&self, timeout: Duration) -> Result<WaitOutcome, NotifyError> {
-        self.backend.wait(&self.handle, timeout)
-    }
-}
-
-impl<B: SemaphoreBackend> Drop for Semaphore<B> {
-    fn drop(&mut self) {
-        self.backend.close(&self.handle);
-    }
-}
-
-#[derive(Clone)]
-pub(crate) struct OsSemaphoreBackend;
-
-#[cfg(unix)]
-impl SemaphoreBackend for OsSemaphoreBackend {
-    type Handle = *mut libc::sem_t;
-
-    fn open(&self, name: &str) -> Result<Self::Handle, NotifyError> {
-        let full = format!("/{name}");
-        let c_name = CString::new(full).map_err(|_| NotifyError::Unavailable)?;
-        let mode = (libc::S_IRUSR | libc::S_IWUSR) as libc::mode_t;
-        let handle =
-            unsafe { libc::sem_open(c_name.as_ptr(), libc::O_CREAT, mode as libc::c_uint, 0) };
-        if handle == libc::SEM_FAILED {
-            return Err(map_sem_error());
-        }
-        Ok(handle)
-    }
-
-    fn post(&self, handle: &Self::Handle) -> Result<(), NotifyError> {
-        let rc = unsafe { libc::sem_post(*handle) };
-        if rc != 0 {
-            return Err(map_sem_error());
-        }
-        Ok(())
-    }
-
-    fn wait(&self, handle: &Self::Handle, timeout: Duration) -> Result<WaitOutcome, NotifyError> {
-        let start = SystemTime::now();
-        let poll = Duration::from_millis(5).min(timeout.max(Duration::from_millis(1)));
-
-        loop {
-            let rc = unsafe { libc::sem_trywait(*handle) };
-            if rc == 0 {
-                return Ok(WaitOutcome::Signaled);
-            }
-            let err = io::Error::last_os_error();
-            match err.raw_os_error() {
-                Some(code) if code == libc::EAGAIN => {
-                    let elapsed = start.elapsed().unwrap_or_default();
-                    if elapsed >= timeout {
-                        return Ok(WaitOutcome::TimedOut);
-                    }
-                    std::thread::sleep(poll);
-                }
-                Some(code) if code == libc::EINTR => continue,
-                _ => return Err(map_sem_error_with(err)),
-            }
-        }
-    }
-
-    fn close(&self, handle: &Self::Handle) {
-        unsafe {
-            libc::sem_close(*handle);
-        }
-    }
-}
-
-#[cfg(not(unix))]
-impl SemaphoreBackend for OsSemaphoreBackend {
-    type Handle = ();
-
-    fn open(&self, _name: &str) -> Result<Self::Handle, NotifyError> {
-        Err(NotifyError::Unavailable)
-    }
-
-    fn post(&self, _handle: &Self::Handle) -> Result<(), NotifyError> {
-        Err(NotifyError::Unavailable)
-    }
-
-    fn wait(&self, _handle: &Self::Handle, _timeout: Duration) -> Result<WaitOutcome, NotifyError> {
-        Err(NotifyError::Unavailable)
-    }
-
-    fn close(&self, _handle: &Self::Handle) {}
-}
-
-pub(crate) type PoolSemaphore = Semaphore<OsSemaphoreBackend>;
-
-pub(crate) fn pool_semaphore_name(path: &Path) -> String {
-    let bytes = canonical_path_bytes(path);
-    let digest = Sha256::digest(&bytes);
-    // Darwin permits at most 30 name bytes plus the terminating NUL. Leave
-    // room for the leading slash and prefix; 96 hash bits distinguish pools.
-    let mut hex = String::with_capacity(24);
-    for byte in &digest[..12] {
-        use std::fmt::Write;
-        let _ = write!(hex, "{byte:02x}");
-    }
-    format!("plsm-{hex}")
-}
-
-pub(crate) fn open_for_path(path: &Path) -> Result<PoolSemaphore, NotifyError> {
+pub(crate) fn shared_address_available() -> bool {
     #[cfg(test)]
     if FORCE_UNAVAILABLE.load(Ordering::SeqCst) {
-        return Err(NotifyError::Unavailable);
+        return false;
     }
-    let name = pool_semaphore_name(path);
-    PoolSemaphore::open_with_backend(name, OsSemaphoreBackend)
+    #[cfg(target_os = "macos")]
+    {
+        static AVAILABLE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *AVAILABLE.get_or_init(|| unsafe { plasmite_address_wait_available() != 0 })
+    }
+    #[cfg(any(target_os = "linux", windows))]
+    {
+        true
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    {
+        false
+    }
 }
 
-pub(crate) fn post_for_path(path: &Path) -> Result<(), NotifyError> {
-    #[cfg(test)]
-    if FORCE_UNAVAILABLE.load(Ordering::SeqCst) {
-        return Err(NotifyError::Unavailable);
+#[cfg(target_os = "macos")]
+pub(crate) fn wait_for_sequence(
+    interest: &AtomicU32,
+    word: &AtomicU64,
+    expected: u64,
+    timeout: Duration,
+) -> Result<WaitOutcome, NotifyError> {
+    if word.load(Ordering::Acquire) != expected.to_le() {
+        return Ok(WaitOutcome::Signaled);
     }
-    let semaphore = open_for_path(path)?;
-    semaphore.post()
+    if timeout.is_zero() {
+        return Ok(WaitOutcome::TimedOut);
+    }
+    if arm(interest).is_none() || word.load(Ordering::Acquire) != expected.to_le() {
+        return Ok(WaitOutcome::Signaled);
+    }
+    // Retain the sequence as the wait address so older writers can wake it.
+    let nanos = timeout.as_nanos().min(u64::MAX as u128) as u64;
+    let result = unsafe { plasmite_address_wait(word.as_ptr(), expected.to_le(), nanos) };
+    if result >= 0 {
+        return Ok(WaitOutcome::Signaled);
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ETIMEDOUT) => Ok(WaitOutcome::TimedOut),
+        Some(libc::EINTR) => Ok(WaitOutcome::Signaled),
+        _ => Err(map_notify_error_with(error)),
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn wake_sequence(word: &AtomicU64) {
+    // The reader's bounded check covers any failed hint.
+    unsafe { plasmite_address_wake_all(word.as_ptr()) };
 }
 
 #[cfg(test)]
@@ -189,169 +157,20 @@ pub(crate) fn force_unavailable_for_tests(enabled: bool) {
 #[cfg(test)]
 static FORCE_UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
-fn canonical_path_bytes(path: &Path) -> Vec<u8> {
-    let resolved = std::fs::canonicalize(path);
-    let path = resolved.as_ref().map_or(path, |value| value.as_path());
-    #[cfg(unix)]
-    {
-        path.as_os_str().as_bytes().to_vec()
-    }
-    #[cfg(not(unix))]
-    {
-        path.to_string_lossy().as_bytes().to_vec()
-    }
+#[cfg(all(unix, not(target_os = "linux")))]
+fn map_notify_error() -> NotifyError {
+    map_notify_error_with(io::Error::last_os_error())
 }
 
 #[cfg(unix)]
-fn map_sem_error() -> NotifyError {
-    map_sem_error_with(io::Error::last_os_error())
-}
-
-#[cfg(unix)]
-fn map_sem_error_with(err: io::Error) -> NotifyError {
+fn map_notify_error_with(err: io::Error) -> NotifyError {
     match err.raw_os_error() {
         Some(code) if code == libc::ENOSYS || code == libc::ENOTSUP => NotifyError::Unavailable,
         _ => NotifyError::Io(err),
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Condvar, Mutex};
-    use std::time::Duration;
-
-    #[derive(Clone, Default)]
-    struct TestBackend {
-        semaphores: Arc<Mutex<HashMap<String, Arc<TestSemaphoreState>>>>,
-    }
-
-    struct TestSemaphoreState {
-        count: Mutex<u64>,
-        ready: Condvar,
-    }
-
-    impl TestSemaphoreState {
-        fn new() -> Self {
-            Self {
-                count: Mutex::new(0),
-                ready: Condvar::new(),
-            }
-        }
-    }
-
-    impl SemaphoreBackend for TestBackend {
-        type Handle = Arc<TestSemaphoreState>;
-
-        fn open(&self, name: &str) -> Result<Self::Handle, NotifyError> {
-            let mut guard = self.semaphores.lock().expect("lock");
-            Ok(guard
-                .entry(name.to_string())
-                .or_insert_with(|| Arc::new(TestSemaphoreState::new()))
-                .clone())
-        }
-
-        fn post(&self, handle: &Self::Handle) -> Result<(), NotifyError> {
-            let mut count = handle.count.lock().expect("lock");
-            *count += 1;
-            handle.ready.notify_all();
-            Ok(())
-        }
-
-        fn wait(
-            &self,
-            handle: &Self::Handle,
-            timeout: Duration,
-        ) -> Result<WaitOutcome, NotifyError> {
-            let mut count = handle.count.lock().expect("lock");
-            if *count > 0 {
-                *count -= 1;
-                return Ok(WaitOutcome::Signaled);
-            }
-
-            let (mut count, result) = handle.ready.wait_timeout(count, timeout).expect("wait");
-            if *count > 0 {
-                *count -= 1;
-                return Ok(WaitOutcome::Signaled);
-            }
-            if result.timed_out() {
-                return Ok(WaitOutcome::TimedOut);
-            }
-            Ok(WaitOutcome::TimedOut)
-        }
-
-        fn close(&self, _handle: &Self::Handle) {}
-    }
-
-    #[test]
-    fn semaphore_names_are_stable_and_distinct_for_existing_and_missing_pools() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let existing = temp.path().join("first.plasmite");
-        let other_existing = temp.path().join("second.plasmite");
-        std::fs::write(&existing, []).expect("first pool path");
-        std::fs::write(&other_existing, []).expect("second pool path");
-        for (first_path, second_path) in [
-            (existing.clone(), other_existing),
-            (
-                temp.path().join("missing-first"),
-                temp.path().join("missing-second"),
-            ),
-        ] {
-            let first = pool_semaphore_name(&first_path);
-            assert_eq!(first, pool_semaphore_name(&first_path));
-            assert_ne!(first, pool_semaphore_name(&second_path));
-            assert!(first.starts_with("plsm-"));
-            assert!(first.len() + 1 < 31, "include the leading slash");
-        }
-        assert_eq!(
-            pool_semaphore_name(&existing),
-            pool_semaphore_name(&temp.path().join(".").join("first.plasmite"))
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn native_handles_share_signals_with_a_platform_sized_name() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let name = pool_semaphore_name(&temp.path().join("native.plasmite"));
-        struct Unlink(CString);
-        impl Drop for Unlink {
-            fn drop(&mut self) {
-                unsafe { libc::sem_unlink(self.0.as_ptr()) };
-            }
-        }
-        let _cleanup = Unlink(CString::new(format!("/{name}")).unwrap());
-        // Exercise the real backend directly: unavailable notifications must
-        // fail this test rather than silently turn it into a polling test.
-        let sender = Semaphore::open_with_backend(name.clone(), OsSemaphoreBackend).unwrap();
-        let receiver = Semaphore::open_with_backend(name, OsSemaphoreBackend).unwrap();
-        assert_eq!(
-            receiver.wait(Duration::ZERO).unwrap(),
-            WaitOutcome::TimedOut
-        );
-        sender.post().unwrap();
-        assert_eq!(
-            receiver.wait(Duration::from_secs(1)).unwrap(),
-            WaitOutcome::Signaled
-        );
-    }
-
-    #[test]
-    fn test_backend_post_and_wait() {
-        let backend = TestBackend::default();
-        let name = pool_semaphore_name(Path::new("test.plasmite"));
-        let sem_a = Semaphore::open_with_backend(name.clone(), backend.clone()).expect("open");
-        let sem_b = Semaphore::open_with_backend(name, backend).expect("open");
-
-        assert_eq!(
-            sem_a.wait(Duration::from_millis(5)).expect("wait"),
-            WaitOutcome::TimedOut
-        );
-        sem_b.post().expect("post");
-        assert_eq!(
-            sem_a.wait(Duration::from_millis(50)).expect("wait"),
-            WaitOutcome::Signaled
-        );
-    }
-}
+#[cfg(not(any(target_os = "linux", windows)))]
+mod semaphore;
+#[cfg(not(any(target_os = "linux", windows)))]
+pub(crate) use semaphore::{PoolSemaphore, open_for_path, pool_semaphore_name, post_for_name};

@@ -1,4 +1,4 @@
-//! Purpose: `plasmite` CLI entry point and v0.0.1 command dispatch.
+//! Purpose: `plasmite` CLI entry point and command dispatch.
 //! Role: Binary crate root; parses args, runs commands, emits JSON on stdout.
 //! Invariants: Commands emit stable stdout formats (human or JSON by command/flags).
 //! Invariants: Errors are readable text unless structured output is explicitly requested.
@@ -14,7 +14,6 @@ mod access_store;
 mod cli;
 mod color_json;
 mod interface_wire;
-mod jq_filter;
 mod mcp_stdio;
 mod pool_info_json;
 mod pool_paths;
@@ -24,7 +23,6 @@ mod serve_registry;
 mod serve_service;
 #[cfg(windows)]
 mod server_private;
-mod since;
 mod udp_input;
 #[expect(
     dead_code,
@@ -152,7 +150,7 @@ fn run() -> Result<RunOutcome, (Error, ColorMode, OutputMode)> {
             output_mode,
         ));
     }
-    let pool_dir = cli.dir.into_iter().next().unwrap_or_else(default_pool_dir);
+    let pool_dir = cli.dir.into_iter().next().or_else(default_pool_dir);
     let result = cli::dispatch(
         cli.command,
         CliContext::new(pool_dir, color_mode, output_mode),
@@ -187,7 +185,7 @@ fn has_conflicting_directories(args: &[OsString]) -> bool {
 }
 
 // The parser may fail before it can produce a command. Respect an explicit
-// output request, but never interpret flags belonging to tap's child process.
+// output request, but stop interpreting options after `--`.
 fn default_output_mode() -> OutputMode {
     use std::io::IsTerminal;
     if std::io::stdout().is_terminal() {
@@ -219,13 +217,13 @@ fn normalize_args<I>(args: I) -> Vec<OsString>
 where
     I: IntoIterator<Item = OsString>,
 {
-    let mut child_args = false;
+    let mut positional_only = false;
     args.into_iter()
         .map(|arg| {
             if arg == "--" {
-                child_args = true;
+                positional_only = true;
             }
-            if child_args {
+            if positional_only {
                 return arg;
             }
             let replacement = arg.to_str().and_then(|value| match value {
@@ -248,35 +246,22 @@ mod tests {
     use crate::cli::output_support::{
         format_bytes, format_relative_time, format_seq_range, format_timestamp_human,
     };
-    use crate::cli::stream_support::matches_required_tags;
-    use crate::cli::support::{
-        RetryConfig, parse_duration, parse_size, resolve_pool_target, retry_append,
-    };
+    use crate::cli::support::{parse_size, resolve_pool_target};
     use clap::CommandFactory;
     use serde_json::json;
     use std::io::Cursor;
     use std::path::{Path, PathBuf};
-    use std::time::Duration;
 
     #[test]
     fn directory_conflicts_include_all_scopes_and_equal_spellings() {
         use std::ffi::OsString;
         let conflict = ["plasmite", "--dir", "/one", "pool", "list", "--dir=/two"];
         let equal = ["plasmite", "--dir", "/one", "pool", "list", "--dir=/one"];
-        let child = [
-            "plasmite",
-            "--dir",
-            "/one",
-            "tap",
-            "demo",
-            "--",
-            "echo",
-            "--dir=/two",
-        ];
+        let positional = ["plasmite", "--dir", "/one", "feed", "--", "--dir=/two"];
         for (args, expected) in [
             (conflict.as_slice(), true),
             (equal.as_slice(), false),
-            (child.as_slice(), false),
+            (positional.as_slice(), false),
         ] {
             let args = args.iter().map(OsString::from).collect::<Vec<_>>();
             assert_eq!(super::has_conflicting_directories(&args), expected);
@@ -284,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn argument_normalization_preserves_child_arguments() {
+    fn argument_normalization_respects_end_of_options() {
         use std::ffi::OsString;
         let args = [
             "plasmite",
@@ -318,7 +303,7 @@ mod tests {
             ("plasmite access", vec!["format", "help"]),
             ("plasmite access connect", vec!["format", "help"]),
             ("plasmite access disconnect", vec!["format", "help"]),
-            ("plasmite access invite", vec!["format", "help", "name"]),
+            ("plasmite access invite", vec!["format", "help"]),
             ("plasmite access keys", vec!["format", "help"]),
             ("plasmite access list", vec!["format", "help"]),
             ("plasmite access revoke", vec!["format", "help"]),
@@ -328,41 +313,26 @@ mod tests {
             ("plasmite doctor", vec!["all", "format", "help"]),
             (
                 "plasmite duplex",
-                vec!["create", "format", "help", "since", "tail", "timeout"],
+                vec!["create", "format", "help", "last", "since"],
             ),
             (
                 "plasmite feed",
                 vec![
                     "create",
-                    "create-size",
                     "durability",
-                    "file",
                     "format",
                     "help",
                     "input-format",
-                    "retry",
-                    "retry-delay",
                     "tag",
                 ],
             ),
-            ("plasmite fetch", vec!["format", "help"]),
+            (
+                "plasmite fetch",
+                vec!["format", "help", "last", "since", "tag"],
+            ),
             (
                 "plasmite follow",
-                vec![
-                    "create",
-                    "format",
-                    "help",
-                    "no-follow",
-                    "no-notify",
-                    "one",
-                    "quiet-drops",
-                    "replay",
-                    "since",
-                    "tag",
-                    "tail",
-                    "timeout",
-                    "where",
-                ],
+                vec!["create", "format", "help", "last", "one", "since", "tag"],
             ),
             ("plasmite help", vec![]),
             ("plasmite mcp", vec!["format", "help"]),
@@ -385,7 +355,6 @@ mod tests {
                     "max-tail-concurrency",
                     "max-tail-timeout-ms",
                     "remote-bind",
-                    "shared-address",
                     "tls-cert",
                     "tls-key",
                     "udp",
@@ -405,7 +374,6 @@ mod tests {
                     "no-udp",
                     "no-udp-follow",
                     "remote-bind",
-                    "shared-address",
                     "tls-cert",
                     "tls-key",
                     "udp",
@@ -421,18 +389,6 @@ mod tests {
             ("plasmite serve status", vec!["all", "format", "help"]),
             ("plasmite serve stop", vec!["format", "help"]),
             ("plasmite serve uninstall", vec!["format", "help"]),
-            (
-                "plasmite tap",
-                vec![
-                    "create",
-                    "create-size",
-                    "durability",
-                    "format",
-                    "help",
-                    "quiet",
-                    "tag",
-                ],
-            ),
             ("plasmite version", vec!["format", "help"]),
         ]
         .into_iter()
@@ -588,13 +544,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_duration_accepts_ms_s_m() {
-        assert_eq!(parse_duration("500ms").unwrap(), Duration::from_millis(500));
-        assert_eq!(parse_duration("5s").unwrap(), Duration::from_secs(5));
-        assert_eq!(parse_duration("1m").unwrap(), Duration::from_secs(60));
-    }
-
-    #[test]
     fn read_json_stream_accepts_multiple_values() {
         let input = b"{\"a\":1}\n {\"b\":2} {\"c\":3}";
         let mut values = Vec::new();
@@ -605,29 +554,6 @@ mod tests {
         .expect("stream parse");
         assert_eq!(count, 3);
         assert_eq!(values, vec![json!({"a":1}), json!({"b":2}), json!({"c":3})]);
-    }
-
-    #[test]
-    fn required_tags_match_all_requested_tags() {
-        let message = json!({
-            "meta": {
-                "tags": ["error", "billing", "prod"]
-            }
-        });
-        assert!(matches_required_tags(
-            &["error".to_string(), "billing".to_string()],
-            &message
-        ));
-        assert!(!matches_required_tags(
-            &["error".to_string(), "missing".to_string()],
-            &message
-        ));
-    }
-
-    #[test]
-    fn required_tags_returns_false_on_missing_meta_tags() {
-        let message = json!({"data": {"x": 1}});
-        assert!(!matches_required_tags(&["error".to_string()], &message));
     }
 
     #[test]
@@ -643,7 +569,7 @@ mod tests {
     #[test]
     fn resolve_pool_target_classifies_local_name() {
         let pool_dir = Path::new("/tmp/pools");
-        let target = resolve_pool_target("demo", pool_dir).expect("target");
+        let target = resolve_pool_target("demo", Some(pool_dir)).expect("target");
         match target {
             PoolTarget::LocalPath(path) => assert_eq!(path, pool_dir.join("demo.plasmite")),
             _ => panic!("expected local path"),
@@ -652,8 +578,9 @@ mod tests {
 
     #[test]
     fn resolve_pool_target_accepts_remote_shorthand() {
-        let target = resolve_pool_target("http://localhost:9170/demo", Path::new("/tmp/pools"))
-            .expect("target");
+        let target =
+            resolve_pool_target("http://localhost:9170/demo", Some(Path::new("/tmp/pools")))
+                .expect("target");
         assert_eq!(
             target,
             PoolTarget::Remote {
@@ -667,7 +594,7 @@ mod tests {
     fn resolve_pool_target_accepts_one_decoded_udp_name() {
         let target = resolve_pool_target(
             "udp://localhost:9701/sensor%20data",
-            Path::new("/tmp/pools"),
+            Some(Path::new("/tmp/pools")),
         )
         .expect("UDP target");
         assert_eq!(
@@ -678,7 +605,7 @@ mod tests {
             }
         );
         assert_eq!(
-            resolve_pool_target("udp://[::1]:9701/sensors", Path::new("/tmp/pools")).unwrap(),
+            resolve_pool_target("udp://[::1]:9701/sensors", Some(Path::new("/tmp/pools"))).unwrap(),
             PoolTarget::Udp {
                 endpoint: "udp://[::1]:9701".into(),
                 pool: "sensors".into()
@@ -700,7 +627,7 @@ mod tests {
             "udp://localhost:9701/sensors#x",
         ] {
             assert!(
-                resolve_pool_target(input, Path::new("/tmp/pools")).is_err(),
+                resolve_pool_target(input, Some(Path::new("/tmp/pools"))).is_err(),
                 "{input}"
             );
         }
@@ -710,7 +637,7 @@ mod tests {
     fn resolve_pool_target_rejects_api_shaped_remote_ref() {
         let err = resolve_pool_target(
             "http://localhost:9170/v0/pools/demo/append",
-            Path::new("/tmp/pools"),
+            Some(Path::new("/tmp/pools")),
         )
         .expect_err("err");
         assert_eq!(err.kind(), ErrorKind::Usage);
@@ -718,25 +645,31 @@ mod tests {
 
     #[test]
     fn resolve_pool_target_rejects_trailing_slash_remote_ref() {
-        let err = resolve_pool_target("http://localhost:9170/demo/", Path::new("/tmp/pools"))
+        let err = resolve_pool_target("http://localhost:9170/demo/", Some(Path::new("/tmp/pools")))
             .expect_err("err");
         assert_eq!(err.kind(), ErrorKind::Usage);
     }
 
     #[test]
     fn resolve_pool_target_rejects_unsupported_scheme() {
-        let err = resolve_pool_target("tcp://localhost:9170/demo", Path::new("/tmp/pools"))
+        let err = resolve_pool_target("tcp://localhost:9170/demo", Some(Path::new("/tmp/pools")))
             .expect_err("err");
         assert_eq!(err.kind(), ErrorKind::Usage);
     }
 
     #[test]
     fn resolve_pool_target_rejects_query_and_fragment() {
-        let err = resolve_pool_target("http://localhost:9170/demo?x=1", Path::new("/tmp/pools"))
-            .expect_err("err");
+        let err = resolve_pool_target(
+            "http://localhost:9170/demo?x=1",
+            Some(Path::new("/tmp/pools")),
+        )
+        .expect_err("err");
         assert_eq!(err.kind(), ErrorKind::Usage);
-        let err = resolve_pool_target("http://localhost:9170/demo#frag", Path::new("/tmp/pools"))
-            .expect_err("err");
+        let err = resolve_pool_target(
+            "http://localhost:9170/demo#frag",
+            Some(Path::new("/tmp/pools")),
+        )
+        .expect_err("err");
         assert_eq!(err.kind(), ErrorKind::Usage);
     }
 
@@ -744,52 +677,11 @@ mod tests {
     #[test]
     fn resolve_pool_target_treats_windows_backslash_path_as_local_path() {
         let input = r"C:\pools\demo.plasmite";
-        let target = resolve_pool_target(input, Path::new("C:\\ignored")).expect("target");
+        let target = resolve_pool_target(input, Some(Path::new("C:\\ignored"))).expect("target");
         match target {
             PoolTarget::LocalPath(path) => assert_eq!(path, PathBuf::from(input)),
             _ => panic!("expected local path"),
         }
-    }
-
-    #[test]
-    fn retry_append_retries_until_success() {
-        let mut attempts = 0u32;
-        let value = retry_append(
-            Some(RetryConfig {
-                retries: 2,
-                delay: Duration::from_millis(0),
-            }),
-            || {
-                attempts += 1;
-                if attempts < 2 {
-                    return Err(Error::new(ErrorKind::Busy));
-                }
-                Ok(21u8)
-            },
-        )
-        .expect("retry should succeed");
-        assert_eq!(attempts, 2);
-        assert_eq!(value, 21u8);
-    }
-
-    #[test]
-    fn retry_append_exhausts_when_still_retryable() {
-        let mut attempts = 0u32;
-        let result: Result<u8, Error> = retry_append(
-            Some(RetryConfig {
-                retries: 1,
-                delay: Duration::from_millis(0),
-            }),
-            || {
-                attempts += 1;
-                Err(Error::new(ErrorKind::Busy))
-            },
-        );
-        assert_eq!(attempts, 2);
-        let err = result.expect_err("expected retry exhaustion");
-        assert_eq!(err.kind(), ErrorKind::Busy);
-        let hint = err.hint().unwrap_or("");
-        assert!(hint.contains("Retry attempts: 2"));
     }
 
     #[test]

@@ -13,12 +13,10 @@ use std::path::PathBuf;
 fn main() {
     println!("cargo:rerun-if-env-changed=PLASMITE_LIB_DIR");
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let link_name = if target_os == "windows" {
-        // Rust cdylib builds on MSVC emit plasmite.dll + plasmite.dll.lib.
-        "plasmite.dll"
-    } else {
-        "plasmite"
-    };
+    if target_os == "windows" {
+        // The Windows extern blocks import directly from plasmite2.dll.
+        return;
+    }
     if target_os == "macos" {
         println!("cargo:rustc-link-arg=-Wl,-undefined,dynamic_lookup");
         println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
@@ -43,20 +41,17 @@ fn main() {
             repo_root.join("target").join("release"),
         ]);
 
-    let mut found = None;
-    for candidate in candidates {
-        if candidate.exists() {
-            found = Some(candidate);
-            break;
-        }
-    }
+    let name = if target_os == "macos" {
+        "libplasmite.2.dylib"
+    } else {
+        "libplasmite.so.2"
+    };
+    let library = candidates
+        .map(|dir| dir.join(name))
+        .find(|path| path.is_file())
+        .expect("build libplasmite or set PLASMITE_LIB_DIR");
 
-    let lib_dir = found.unwrap_or_else(|| {
-        panic!(
-            "libplasmite not found; set PLASMITE_LIB_DIR or build target/debug/libplasmite.*"
-        )
-    });
-
-    println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=dylib={link_name}");
+    // Link the same versioned library the package ships beside the addon.
+    println!("cargo:rerun-if-changed={}", library.display());
+    println!("cargo:rustc-link-arg={}", library.display());
 }

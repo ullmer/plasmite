@@ -1,5 +1,5 @@
 //! Loopback Lite3 feed/follow comparison. See udp-transport.md for the command.
-//! Build this standalone file against the release library; it changes no crate targets.
+//! Build this historical harness against the library at fd3823c, as the report describes.
 
 use plasmite::api::{
     Durability, LocalClient, PoolOptions, PoolRef, RemoteClient, TailOptions, UdpClient, UdpEvent,

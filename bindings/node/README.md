@@ -1,11 +1,6 @@
-# plasmite
+# Plasmite for Node.js
 
-Persistent, bounded JSON message streams for Node.js. Local use needs no broker or daemon.
-
-Plasmite gives you disk-backed ring buffers ("pools") that multiple processes
-can read and write concurrently. Use them for IPC, recent event history,
-and process output. The ring overwrites old messages when full; it does not
-acknowledge consumption or retain work until a consumer finishes.
+Plasmite stores JSON messages in pools: bounded ring buffers on disk that many processes can write and read at once. `feed` writes a message, `follow` waits for new ones, and `fetch` reads what the pool holds and stops. Each message carries a sequence number (`seq`), a time, tags and a JSON object as `data`. When a pool fills, the oldest messages make room for new ones. This package opens local pools, pools on a shared HTTPS server and UDP endpoints. The [project README](https://github.com/sandover/plasmite#readme) explains the model and the CLI.
 
 ## Install
 
@@ -13,315 +8,147 @@ acknowledge consumption or retain work until a consumer finishes.
 npm install plasmite
 ```
 
-Requires **Node.js 24 or newer**, including the npm CLI. Published packages
-include native binaries on macOS x64/arm64, Linux x64, and Windows x64, so
-those platforms need no Rust toolchain or compile step. See
-[platform support](#platform-support) before installing on another target.
+The package needs Node.js 24 or newer. It includes native binaries and the `plasmite` CLI (`npx plasmite`) for macOS (x64, arm64), Linux x64 with glibc 2.35 or newer, and Windows x64. The HTTP `RemoteClient` runs without those binaries. TypeScript declarations ship with the package. See [distribution](https://github.com/sandover/plasmite/blob/main/docs/record/distribution.md).
 
 ## Quick start
 
-### Local pools (native, in-process)
+Record a temperature reading, watch for it, then read recent history. Save this as `sensors.mjs`:
 
 ```js
-const { Client, Durability, ErrorKind, PlasmiteNativeError } = require("plasmite");
+import { Client } from "plasmite";
 
 const client = new Client("./data");
-let pool;
-try {
-  pool = client.pool("events", 64 * 1024 * 1024);
+const pool = client.openPool("sensors", { create: true });
 
-  const msg = pool.append({ kind: "signup", user: "alice" }, ["user-event"], Durability.Flush);
-  console.log(msg.seq, msg.tags, msg.data);
-  // => 1n [ 'user-event' ] { kind: 'signup', user: 'alice' }
+const live = await pool.follow({ tags: ["kitchen"] });
+await pool.feed({ temp_c: 21.4 }, { tags: ["kitchen"] });
+console.log((await live.next()).value.data);   // { temp_c: 21.4 }
+await live.return();
 
-  const fetched = pool.get(msg.seq);
-  console.log(fetched.data.user);
-  // => "alice"
+for await (const message of await pool.fetch({ last: 10 })) {
+  console.log(message.seq, message.tags, message.data);
+}
+pool.close();
+client.close();
+```
 
+`follow` fixes its position before its promise resolves, so it sees the feed that comes after it. `fetch` stops at the last message present when it opened. `seq` and `time` are `bigint`s; `time` counts Unix nanoseconds. `pool.info().bounds` reports the oldest and newest retained sequence. The module functions `openPool`, `createPool`, `listPools` and `deletePool` use the default directory, `~/.plasmite/pools`. Use `createPool(ref, sizeBytes)` to choose a size; `create: true` makes a 1 MiB pool.
+
+## Reading
+
+Every read starts at a position. `follow` starts at the next new message by default; `fetch` starts at the oldest retained one.
+
+```js
+import { at } from "plasmite";
+
+await pool.fetch({ since: "oldest" });               // everything the pool still holds
+await pool.fetch({ since: 42n });                    // sequence 42 onward, inclusive
+await pool.fetch({ since: "5m" });                   // the last five minutes
+await pool.fetch({ since: "2026-11-19T09:00:00Z" }); // an RFC 3339 time
+await pool.fetch({ since: at(1795078800000000000n) }); // the same time as Unix nanoseconds
+await pool.fetch({ last: 20 });                      // the 20 most recent messages
+await pool.follow({ tags: ["error"] });              // only messages carrying every listed tag
+```
+
+`follow` takes the same options. Pass `since` or `last`, not both. Sequences accept `number` or `bigint`; use `bigint` above `Number.MAX_SAFE_INTEGER`.
+
+Resume after a restart by saving the next sequence to read. If the pool overwrote messages before you read them, opening or advancing the reader can throw a `RetentionGap` error.
+
+```js
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { ErrorKind } from "plasmite";
+
+const checkpoint = "sensors.seq";
+let start = existsSync(checkpoint) ? BigInt(readFileSync(checkpoint, "utf8")) : "oldest";
+for (;;) {
   try {
-    client.openPool("missing");
+    for await (const message of await pool.follow({ since: start })) {
+      console.log(message.data);
+      writeFileSync(checkpoint, String(message.seq + 1n));
+    }
   } catch (err) {
-    if (err instanceof PlasmiteNativeError && err.kind === ErrorKind.NotFound) {
-      console.log("pool not found");
-    } else {
-      throw err;
-    }
-  }
-} finally {
-  if (pool) pool.close();
-  client.close();
-}
-```
-
-### UDP sender and follower
-
-UDP uses one explicit endpoint. The server must enable `--udp-follow`, which
-allows unauthenticated, unencrypted reads on that socket. A send call reports
-local validation or operating-system errors; it never returns a storage
-receipt.
-
-The [UDP receive policy](../../spec/udp/v1/SPEC.md#receive-ordering-and-notices)
-requires arrival-order delivery, including late messages and duplicates. Only
-explicit server skips produce gap events; sequence/progress jumps never suppress
-frames or establish loss. This source change awaits a major release. Finite
-follows end on terminal
-progress and may leave DATA in flight.
-
-```js
-const { UdpClient, UdpStart } = require("plasmite");
-
-(async () => {
-  const client = new UdpClient("udp://127.0.0.1:9701");
-  const pool = client.openPool("sensors");
-  const follow = await pool.follow({ start: UdpStart.new(), live: true });
-
-  try {
-    pool.sendJson({ temperature: 23 }, ["sensor"]);
-    for await (const event of follow) {
-      if (event.kind === "frame") {
-        console.log(event.seq, event.message.data);
-        break;
-      }
-    }
-  } finally {
-    follow.close();
-    pool.close();
-    client.close();
-  }
-})().catch(console.error);
-```
-
-Use `UdpStart.last(count)`, `UdpStart.since(timestampNs)`, or
-`UdpStart.sequence(seq)` to select retained history. Sequence and timestamp
-metadata use `bigint`. Pass `bigint` for start values above JavaScript's safe
-integer range; the SDK rejects unsafe `number` values instead of rounding them.
-`follow()` returns a promise while the server confirms the initial subscription.
-Closing its pool during that handshake does not cancel the opening call; the
-call keeps its native handle until it succeeds or reaches the five-second
-startup deadline. Once open, call `follow.close()` to close the subscription.
-Await `nextEvent(timeoutMs)`; it returns `null` when the wait expires. Pass an
-`AbortSignal` as the second argument to stop one pending wait. The async
-iterator keeps waiting until a finite follow ends and accepts the same signal
-in its options.
-
-## Troubleshooting
-
-- **Missing pool directory**: pool creation creates parent directories automatically. If you call `openPool(...)` on a missing pool, catch `ErrorKind.NotFound` or use `client.pool(...)` to create-or-open.
-- **Permission denied**: choose a writable pool directory (`new Client("/path/to/pools")`) and verify directory permissions/ownership. Errors include `err.path` when available.
-
-### Remote pools (HTTP/JSON)
-
-This example uses a server's credential-free loopback HTTP listener on the
-same machine. Create `events` and start `npx plasmite --dir ./data serve`
-first. The JavaScript HTTP client works without the native addon.
-
-It does not load connections saved by `access connect`, parse full `pk1`
-access keys, or verify their certificate pins. Use Rust or the CLI for the
-secure native access-key workflow. The optional `token`/`withToken` API sends
-a supplied Bearer value only over HTTPS, except for loopback HTTP destinations
-such as `localhost` and `127.0.0.1`. Requests without a token may use HTTP.
-Redirects fail with an error and are never followed. HTTPS uses Node's normal
-certificate checks and does not provide key pinning. Do not put a full access
-key in the token field.
-
-```js
-const { RemoteClient } = require("plasmite");
-
-(async () => {
-  const client = new RemoteClient("http://127.0.0.1:9700");
-
-  const pool = await client.openPool("events");
-
-  // Append — accepts plain objects, serialized as JSON for you
-  const message = await pool.append(
-    { kind: "deploy", sha: "abc123" },
-    ["ops"],
-  );
-  console.log(message.seq); // bigint sequence allocated by this pool
-
-  // Read by sequence number
-  const got = await pool.get(message.seq);
-  console.log(got.data); // => { kind: "deploy", sha: "abc123" }
-
-  // Tail — live-stream new messages (JSONL under the hood)
-  for await (const msg of pool.tail({ sinceSeq: message.seq, tags: ["ops"], maxMessages: 1 })) {
-    console.log(msg.seq, msg.tags, msg.data);
-  }
-})();
-```
-
-## API
-
-### Local client
-
-| Class | Method | Description |
-|---|---|---|
-| `Client(dir?)` | | Open a pool directory (`~/.plasmite/pools` by default) |
-| | `.createPool(name, sizeBytes)` | Create a new pool (returns `Pool`) |
-| | `.openPool(name)` | Open an existing pool (returns `Pool`) |
-| | `.pool(name, sizeBytes?)` | Open if present, else create |
-| | `.close()` | Release resources |
-| | `[Symbol.dispose]()` | Alias for `.close()` (used by explicit resource-management syntax when enabled) |
-| `Module` | `.parseMessage(value)` | Normalize a raw envelope or `Message` into a typed `Message` |
-| `Pool` | `.appendJson(payload, tags, durability)` | Append JSON payload (Buffer or JSON-serializable value); returns message envelope as `Buffer` |
-| | `.append(data, tags?, durability?)` | Append any JSON-serializable value; returns typed `Message` |
-| | `.appendLite3(buf, durability?)` | Append raw bytes (lite3 framing); returns sequence `bigint` |
-| | `.get(seq)` | Get message by sequence number; returns typed `Message` |
-| | `.getJson(seq)` | Get message by sequence number; returns `Buffer` |
-| | `.getLite3(seq)` | Get lite3 frame by sequence number |
-| | `.tail(opts?)` | Async generator of typed `Message` values with optional tag filter |
-| | `.openStream(sinceSeq?, max?, timeoutMs?, errorOnGap?)` | Open a message stream |
-| | `.openLite3Stream(sinceSeq?, max?, timeoutMs?, errorOnGap?)` | Open a lite3 frame stream |
-| | `.close()` | Close the pool |
-| | `[Symbol.dispose]()` | Alias for `.close()` (used by explicit resource-management syntax when enabled) |
-| `Stream` | `.nextJson()` | Next message as `Buffer`, or `null` at end |
-| | `[Symbol.iterator]()` | Iterate synchronously via `for...of` |
-| | `.close()` | Close the stream |
-| | `[Symbol.dispose]()` | Alias for `.close()` |
-| `Lite3Stream` | `.next()` | Next lite3 frame, or `null` at end |
-| | `[Symbol.iterator]()` | Iterate synchronously via `for...of` |
-| | `.close()` | Close the stream |
-| | `[Symbol.dispose]()` | Alias for `.close()` |
-| `UdpClient(endpoint)` | | Open one explicit UDP server endpoint |
-| | `.openPool(name)` | Open a named pool handle |
-| `UdpPool` | `.sendJson(data, tags?)` | Send a JSON-origin message without a storage receipt |
-| | `.sendLite3(buf)` | Send a complete Lite3 document |
-| | `.follow(opts?)` | Open a best-effort UDP event stream (`Promise<UdpFollow>`) |
-| `UdpFollow` | `.nextEvent(timeoutMs?)` | Read one frame, gap, or progress event; return `null` at timeout or end |
-| | `[Symbol.asyncIterator]()` | Iterate events asynchronously |
-| | `.close()` | Cancel a wait and close the subscription |
-
-**Durability** controls fsync behavior:
-- `Durability.Fast` — buffered writes (higher throughput)
-- `Durability.Flush` — fsync after write (crash-safe)
-
-Sequence numbers accept `number` or `bigint`; use `bigint` when they exceed
-JavaScript's safe-integer range. `sinceSeq` is inclusive: to resume after the
-last handled message, save `message.seq + 1n` as the next checkpoint.
-
-Local tails continue from the next retained message by default when their
-cursor has fallen behind the ring buffer. Set `errorOnGap: true` when losing
-messages must stop the consumer:
-
-```js
-for await (const message of pool.tail({
-  sinceSeq: checkpoint,
-  errorOnGap: true,
-})) {
-  await handle(message);
-}
-```
-
-The tail throws `PlasmiteNativeError` with
-`kind === ErrorKind.RetentionGap` before delivering a message after the gap.
-Persist the next sequence to read (`message.seq + 1n`) after handling each
-message, and restart from a suitable checkpoint after deciding how to recover.
-
-### Remote client
-
-| Class | Method | Description |
-|---|---|---|
-| `RemoteClient(url, opts?)` | | Connect to a plasmite server |
-| | `.withToken(token)` | Set bearer token (returns `this`) |
-| | `.createPool(name, sizeBytes)` | Create a pool on the server |
-| | `.openPool(name)` | Open a remote pool (returns `RemotePool`) |
-| | `.poolInfo(name)` | Get pool metadata |
-| | `.listPools()` | List all pools |
-| | `.deletePool(name)` | Delete a pool |
-| `RemotePool` | `.append(data, tags?, durability?)` | Append a message (data is any JSON-serializable value) |
-| | `.get(seq)` | Get a message by sequence number |
-| | `.tail(opts?)` | Live-tail typed messages (`AsyncGenerator<Message>`) |
-
-### Tail options
-
-```js
-const options = {
-  sinceSeq: 1n,        // start at this sequence number (inclusive)
-  maxMessages: 100,    // stop after N messages
-  timeoutMs: 5000,     // stream timeout; see local/remote distinction below
-  tags: ["signup"],    // filter by exact tag match (AND across tags)
-  errorOnGap: true,    // fail before delivering a message after a retention gap
-};
-```
-
-Local `tail()` retains one native reader and waits on worker threads, so timers
-and other JavaScript work keep running. `timeoutMs` controls each wait, not a
-total deadline. With `maxMessages`, a quiet wait also ends the tail. Pass
-`signal: controller.signal` to cancel a quiet tail through an `AbortController`.
-Matching-message limits apply after tag filtering. Low-level streams offer
-`nextJsonWait(timeoutMs)` or `nextWait(timeoutMs)` with statuses 0 (wait expired),
-1 (message/frame), 2 (finished), and 3 (cancelled). Their `cancel()` and `close()`
-methods interrupt active waits; worker handles stay alive until the calls finish. Remote `tail()` makes one request and
-ends when that server stream closes or times out. Breaking out of either async iterator closes its stream.
-
-Remote JSON tails surface a fail-closed gap as `RemoteError` with
-`kind === ErrorKind.RetentionGap`. Remote Lite3 tails do not support this
-policy because their frame format has no terminal error representation.
-
-### Error handling
-
-Local operations throw `PlasmiteNativeError` with structured fields:
-
-```js
-try {
-  pool.get(999n);
-} catch (err) {
-  if (err instanceof PlasmiteNativeError) {
-    console.log(err.kind === ErrorKind.NotFound); // true
-    console.log(err.seq);    // 999
+    if (err.kind !== ErrorKind.RetentionGap) throw err;
+    console.log(`lost ${err.missing}..${err.nextSeq - 1n}; resuming at ${err.nextSeq}`);
+    start = err.nextSeq;
+    writeFileSync(checkpoint, String(start));
   }
 }
 ```
 
-HTTP error responses throw `RemoteError` with `status`, `kind`, and optional
-`hint`. Connection and TLS failures may throw Node fetch errors, and malformed
-response bodies may throw parse errors; do not assume every remote failure
-is an HTTP error response.
+`err.missing` is the first sequence you missed and `err.nextSeq` the oldest one still retained. Saving `nextSeq` accepts the loss and moves on.
 
-### CLI
+To wait for a bounded time, call `await reader.next(seconds)`. It resolves to `{ done: false, value: undefined }` when the wait expires and leaves the reader open; `reader.next(0)` polls. To stop a reader, leave the loop, call `reader.return()`, or pass `signal` from an `AbortController` when you open it.
 
-The package includes the `plasmite` CLI:
+## HTTPS pools and UDP
+
+To use a pool on a shared server, connect once with `plasmite access connect https://pools.example.net:9743`, then open the pool by URL. `listPools()` still lists the local directory.
+
+```js
+import { openPool } from "plasmite";
+
+const pool = openPool("https://pools.example.net:9743/sensors", { create: true });
+await pool.feed({ temp_c: 21.4 }, { tags: ["kitchen"] });
+pool.close();
+```
+
+`RemoteClient` is a separate HTTP client written in JavaScript. Construct it with a base URL and optional `{ token }` bearer credentials. Its asynchronous `openPool` returns pools with `info`, `feed`, `fetch`, `follow` and the view and Lite3 methods. It uses Node's normal certificate checks. For the credentials and certificate pins saved by `plasmite access connect`, use the native `openPool` shown here. The HTTP client sends bearer tokens only over HTTPS or to loopback addresses.
+
+UDP trades delivery guarantees for low overhead. A send resolves once the operating system accepts the datagram. Reads deliver frames in arrival order, including duplicates and late arrivals. Before running this example, create `sensors` with `plasmite pool create sensors` and run `plasmite serve --udp-follow` in another terminal.
+
+```js
+import { UdpClient } from "plasmite";
+
+const client = new UdpClient("udp://127.0.0.1:9701");
+const pool = client.openPool("sensors");
+await pool.feed({ temp_c: 21.4 }, { tags: ["kitchen"] });
+const events = await pool.follow({ since: "oldest" });
+for await (const event of events) {
+  if (event.kind === "frame") console.log(event.seq, event.message.data);
+}
+```
+
+A UDP read also yields `skip` (a range the server skipped) and `progress` events. `events.nextEvent(timeoutMs)` waits in milliseconds and resolves to `null` when the wait expires; `events.next(seconds)` matches local readers. Call `events.close()` when you finish. The [UDP spec](https://github.com/sandover/plasmite/blob/main/spec/udp/v1/SPEC.md) defines delivery and limits.
+
+## Errors and concurrency
+
+Native calls throw `PlasmiteNativeError`; `RemoteClient` throws `RemoteError`, which also carries the HTTP `status` and an optional `hint`. Both carry `kind`, one of the nine `ErrorKind` values: `Usage`, `NotFound`, `AlreadyExists`, `Busy`, `Permission`, `Corrupt`, `Io`, `RetentionGap` and `Internal`. They also carry `path`, `seq` and `offset` when known, and `missing` and `nextSeq` for a retention gap; numeric fields are `bigint`s. Bad read options throw with kind `Usage`. Network and TLS failures from `RemoteClient` can surface as ordinary `fetch` errors.
+
+Feeds and reads return promises. The native add-on runs pool writes and reader waits on worker threads. Open one reader per consumer. A second concurrent `next()` on the same native pool reader throws `Busy`. The HTTP-only reader reports `Io` in that case.
+
+## Advanced
+
+These methods avoid conversion work when you forward messages or read a few fields from large ones. The [language interface measurements](https://github.com/sandover/plasmite/blob/main/docs/performance/language-interfaces.md) show when each one pays off.
+
+**Views.** `fetchView` and `followView` open readers that yield immutable message views. `feedView` resolves to the view for the message it wrote. A view keeps its own snapshot, so it stays valid after the pool closes or overwrites the message.
+
+```js
+import { toJson, toNative } from "plasmite";
+
+const reader = await pool.fetchView({ last: 1 });
+const { value: view } = await reader.next();
+await reader.return();
+console.log(view.seq, view.data.temp_c);
+const editable = toNative(view.data);  // ordinary objects and arrays
+const text = toJson(view);             // the full envelope, exact integers
+await pool.feedView(view);             // forward: new seq and time, same data and tags
+```
+
+View properties read like plain objects, but views have no prototype methods (use `Object.hasOwn`) and throw `TypeError` on mutation. Integers within the safe range read as numbers and larger ones as `bigint`s, so use `toJson` instead of `JSON.stringify`. `feedView` also accepts plain objects with `Buffer` or `Uint8Array` byte values; pass `view.data` with new tags to retag a message. `toLite3(view)` copies the encoded bytes. In TypeScript, `fetchView<Reading>()` declares the data shape without checking it. `RemoteClient` pools offer the same view methods through a bundled WebAssembly decoder. See the [Node view measurements](https://github.com/sandover/plasmite/blob/main/docs/performance/language-boundary-results/node-views/README.md).
+
+**Receipts.** `feedReceipt`, `feedJsonReceipt` and `feedLite3Receipt` resolve to only `seq` and `time`, skipping the committed message.
+
+**Lite3.** `feedLite3`, `fetchLite3` and `followLite3` move the binary encoding Plasmite stores. Reads yield frames with `seq`, `time` and `payload`.
+
+## Building from source
+
+From the repo root, build and stage the native library and run the binding tests.
 
 ```bash
-npx plasmite --version
-npx plasmite --dir ./data serve --bind 127.0.0.1:9700
+just bindings-node-test
 ```
 
-## TypeScript
-
-Type declarations ship with the package (`types.d.ts`). No `@types/` install
-needed.
-
-```ts
-import { Client, Durability, Pool, RemoteClient } from "plasmite";
-```
-
-For repo development, `npm test` runs:
-- native rebuild
-- `npm run check:type-surface` (runtime export ↔ `types.d.ts` drift check)
-- `node --test test/*.test.js` (binding tests)
-
-## Platform support
-
-Pre-built binaries are included for:
-- Linux: `x64`
-- macOS: `x64`, `arm64`
-- Windows: `x64`
-
-Linux ARM64 and ARMv7 have [preview SDK archives](https://github.com/sandover/plasmite/blob/main/docs/record/distribution.md#linux-arm-sdk-preview-install)
-for the native CLI/server, but no published npm addon or CLI. Installing an
-SDK archive does not supply a Node addon. The HTTP `RemoteClient` remains
-available without native binaries for the loopback workflow above.
-
-For source development, build the addon and stage its native assets with
-`npm run build` and `npm run prepare-native` on a compatible host.
-See the [distribution guide](https://github.com/sandover/plasmite/blob/main/docs/record/distribution.md) for channel
-support and the [1.0 upgrade guide](https://github.com/sandover/plasmite/blob/main/docs/record/upgrading-1.0.md) for CLI
-and remote-access changes.
+Inside `bindings/node`, `npm run build` compiles the add-on and `npm run prepare-native` stages its native library. `npm test` runs both, checks that `types.d.ts` matches the runtime exports, and runs the tests in `test/`.
 
 ## License
 
 MIT
-
-For playback timing, use the asynchronous tail and an application scheduler; see the
-[next major upgrade guide](../../docs/record/upgrading-next-major.md#sdk-applications-control-playback-timing).

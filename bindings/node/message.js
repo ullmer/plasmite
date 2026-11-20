@@ -58,16 +58,31 @@ function sequenceFromJsonNumber(source) {
 // identity, then restore only the selected envelope's sequence after parsing.
 // Numbers in the user's data and unrelated response fields keep JSON semantics.
 function parseMessageJson(text, envelopeKey = null) {
-  const seqSources = new WeakMap();
+  const sources = new WeakMap();
   const parsed = JSON.parse(text, function (key, value, context) {
-    if (key === "seq" && typeof value === "number") {
-      seqSources.set(this, context.source);
+    if (["seq", "offset", "missing", "next_seq", "until"].includes(key) && typeof value === "number") {
+      const fields = sources.get(this) || {};
+      fields[key] = context.source;
+      sources.set(this, fields);
     }
     return value;
   });
   const envelope = envelopeKey === null ? parsed : parsed?.[envelopeKey];
   if (envelope && typeof envelope === "object" && typeof envelope.seq === "number") {
-    envelope.seq = sequenceFromJsonNumber(seqSources.get(envelope));
+    envelope.seq = sequenceFromJsonNumber(sources.get(envelope).seq);
+  }
+  const error = parsed?.error;
+  if (error && typeof error === "object") {
+    for (const key of ["seq", "offset", "missing", "next_seq"]) {
+      if (typeof error[key] === "number") {
+        error[key] = sequenceFromJsonNumber(sources.get(error)[key]);
+      }
+    }
+  }
+  if (parsed?.type === "cutoff") {
+    for (const key of ["next_seq", "until"]) {
+      if (typeof parsed[key] === "number") parsed[key] = sequenceFromJsonNumber(sources.get(parsed)[key]);
+    }
   }
   return parsed;
 }
@@ -87,21 +102,36 @@ function serializeSeq(seq) {
   return seq.toString();
 }
 
+function parseTimeNs(text) {
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.([0-9]+))?(Z|[+-]\d{2}:\d{2})$/i.exec(text);
+  if (!match) throw new TypeError("message time must be RFC 3339");
+  const milliseconds = Date.parse(match[1] + match[3]);
+  if (!Number.isFinite(milliseconds)) throw new TypeError("message time must be RFC 3339");
+  return BigInt(milliseconds) * 1_000_000n + BigInt((match[2] || "").slice(0, 9).padEnd(9, "0"));
+}
+
+function timeText(ns) {
+  const date = new Date(Number(ns / 1_000_000n));
+  const fraction = (ns % 1_000_000_000n).toString().padStart(9, "0");
+  return date.toISOString().slice(0, -5) + "." + fraction + "Z";
+}
+
+function parsePoolInfo(input) {
+  return JSON.parse(input.toString("utf8"), (key, value, context) =>
+    typeof value === "number" && ["oldest", "newest", "file_size"].includes(key)
+      ? BigInt(context.source) : value);
+}
+
 class Message {
   constructor(envelope, raw = null) {
     if (!envelope || typeof envelope !== "object") {
       throw new TypeError("message envelope must be an object");
     }
     const seq = normalizeMessageSeq(envelope.seq);
-    const timeRfc3339 = String(envelope.time);
-    const time = new Date(timeRfc3339);
-    if (!Number.isFinite(time.getTime())) {
-      throw new TypeError("message time must be RFC3339");
-    }
+    const time = parseTimeNs(String(envelope.time));
     const tags = normalizeMessageTags(envelope.meta);
     this.seq = seq;
     this.time = time;
-    this.timeRfc3339 = timeRfc3339;
     this.data = envelope.data;
     this.meta = Object.freeze({ tags });
     this._raw = Buffer.isBuffer(raw) ? raw : null;
@@ -115,7 +145,7 @@ class Message {
     if (!this._raw) {
       this._raw = Buffer.from(JSON.stringify({
         seq: serializeSeq(this.seq),
-        time: this.timeRfc3339,
+        time: timeText(this.time),
         data: this.data,
         meta: { tags: [...this.meta.tags] },
       }));
@@ -142,9 +172,23 @@ function parseMessage(payload) {
   throw new TypeError("payload must be Buffer, Message, or message envelope object");
 }
 
+// Only call for bytes returned directly by the native ABI. MessageWire emits
+// seq first as decimal digits. Other sources retain the general exact parser.
+function parseNativeMessage(raw) {
+  const text = raw.toString("utf8");
+  const prefix = /^\{"seq":([0-9]{1,20}),"time":"/.exec(text);
+  if (!prefix) return parseMessage(raw);
+  const envelope = JSON.parse(text);
+  envelope.seq = normalizeMessageSeq(prefix[1]);
+  return messageFromEnvelope(envelope, raw);
+}
+
 module.exports = {
+  parseTimeNs, timeText, parsePoolInfo,
   Message,
   messageFromEnvelope,
   parseMessage,
+  parseNativeMessage,
   parseMessageJson,
+  normalizeMessageSeq,
 };

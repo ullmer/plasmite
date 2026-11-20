@@ -4,8 +4,15 @@
 //! Invariants: Additive-only changes to `api`; internal modules remain private.
 //! Invariants: Core modules prefer explicit inputs/outputs over hidden state.
 mod abi;
+mod abi_borrowed;
+mod abi_builder;
+mod abi_fields;
+#[cfg(not(target_arch = "wasm32"))]
+mod abi_remote;
+mod abi_views;
 pub mod api;
 mod core;
+pub mod view;
 use core::error::{Error, ErrorKind};
 mod interface_wire;
 pub mod mcp;

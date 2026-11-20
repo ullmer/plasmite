@@ -5,7 +5,7 @@
 //! Invariants: All FFI interaction is confined to this module + `sys`.
 #[cfg(test)]
 use std::cell::Cell;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 use std::io;
 
 use serde::Serialize;
@@ -13,7 +13,10 @@ use serde_json::Value;
 
 use crate::core::error::{Error, ErrorKind};
 
+pub(crate) mod builder;
+mod json;
 pub mod sys;
+pub(crate) use json::JsonValue;
 
 /// Maximum buffer size for encoded messages and single-document CLI input.
 pub const MAX_LITE3_BUF: usize = 256 * 1024 * 1024;
@@ -23,55 +26,45 @@ pub struct Lite3Buf {
     bytes: Vec<u8>,
 }
 
+// YYJSON_READ_NOFLAG gives the document its own storage; it borrows no input.
+// This owner never escapes encoding and frees through the matching C allocator.
+pub(crate) struct ParsedJson {
+    ptr: std::ptr::NonNull<std::ffi::c_void>,
+    source_len: usize,
+    values: usize,
+}
+
+impl Drop for ParsedJson {
+    fn drop(&mut self) {
+        unsafe { sys::plasmite_lite3_json_doc_free(self.ptr.as_ptr()) };
+    }
+}
+
+fn json_encoding_error() -> Error {
+    let errno = unsafe { sys::plasmite_lite3_last_errno() };
+    let source = if errno != 0 {
+        io::Error::from_raw_os_error(errno)
+    } else {
+        io::Error::other("unknown lite3 errno")
+    };
+    Error::new(ErrorKind::Usage)
+        .with_message("failed to encode json as lite3")
+        .with_source(source)
+}
+
+#[cfg(test)]
+thread_local! {
+    // Parse calls, output attempts, total requested output bytes. No retained cache.
+    static ENCODE_STATS: Cell<(usize, usize, usize)> = const { Cell::new((0, 0, 0)) };
+}
+
 impl Lite3Buf {
     pub fn from_json_str(json: &str) -> Result<Self, Error> {
-        let mut buf_len = json.len().saturating_mul(2).max(256);
-        let json_cstr = CString::new(json).map_err(|err| {
-            Error::new(ErrorKind::Usage)
-                .with_message("json contains null")
-                .with_source(err)
-        })?;
+        Self::from_json_str_with_limit(json, MAX_LITE3_BUF)
+    }
 
-        loop {
-            if buf_len > MAX_LITE3_BUF {
-                return Err(
-                    Error::new(ErrorKind::Usage).with_message("lite3 buffer exceeded max size")
-                );
-            }
-
-            let mut buf = vec![0u8; buf_len];
-            let mut out_len: usize = 0;
-            let ret = unsafe {
-                sys::plasmite_lite3_json_dec(
-                    json_cstr.as_ptr(),
-                    json.len(),
-                    buf.as_mut_ptr(),
-                    &mut out_len as *mut usize,
-                    buf.len(),
-                )
-            };
-
-            if ret == 0 {
-                buf.truncate(out_len);
-                return Ok(Self { bytes: buf });
-            }
-
-            let err_no = unsafe { sys::plasmite_lite3_last_errno() };
-            if err_no == libc::ENOBUFS {
-                buf_len = buf_len.saturating_mul(2);
-                continue;
-            }
-
-            let err = if err_no != 0 {
-                io::Error::from_raw_os_error(err_no)
-            } else {
-                io::Error::other("unknown lite3 errno")
-            };
-
-            return Err(Error::new(ErrorKind::Usage)
-                .with_message("failed to encode json as lite3")
-                .with_source(err));
-        }
+    fn from_json_str_with_limit(json: &str, max_bytes: usize) -> Result<Self, Error> {
+        ParsedJson::parse(json.as_bytes())?.build(max_bytes, None)
     }
 
     pub fn as_slice(&self) -> &[u8] {
@@ -88,6 +81,127 @@ impl Lite3Buf {
 
     pub fn as_doc(&self) -> Lite3DocRef<'_> {
         Lite3DocRef { bytes: &self.bytes }
+    }
+}
+
+impl ParsedJson {
+    pub(crate) fn parse(input: &[u8]) -> Result<Self, Error> {
+        Self::parse_with(input, false)
+    }
+    pub(crate) fn parse_view(input: &[u8]) -> Result<Self, Error> {
+        Self::parse_with(input, true)
+    }
+    fn parse_with(input: &[u8], strict: bool) -> Result<Self, Error> {
+        if input.contains(&0) {
+            return Err(Error::new(ErrorKind::Usage).with_message("json contains null"));
+        }
+        #[cfg(test)]
+        ENCODE_STATS.with(|stats| {
+            let (p, a, b) = stats.get();
+            stats.set((p + 1, a, b));
+        });
+        let mut values = 0;
+        let ptr = std::ptr::NonNull::new(unsafe {
+            if strict {
+                sys::plasmite_lite3_json_parse_view(input.as_ptr().cast(), input.len(), &mut values)
+            } else {
+                sys::plasmite_lite3_json_parse(input.as_ptr().cast(), input.len(), &mut values)
+            }
+        })
+        .ok_or_else(json_encoding_error)?;
+        Ok(Self {
+            ptr,
+            source_len: input.len(),
+            values,
+        })
+    }
+
+    pub(crate) fn value(&self) -> JsonValue<'_> {
+        JsonValue::from_parsed(self)
+    }
+
+    pub(crate) fn encode_message(&self, tags: &[&str]) -> Result<Lite3Buf, Error> {
+        if self.value().kind() != sys::LITE3_TYPE_OBJECT {
+            return Err(Error::new(ErrorKind::Usage).with_message("data must be object"));
+        }
+        let tags: Vec<_> = tags
+            .iter()
+            .map(|tag| sys::TextRef {
+                ptr: tag.as_ptr().cast(),
+                len: tag.len(),
+            })
+            .collect();
+        self.build(MAX_LITE3_BUF, Some(&tags))
+    }
+
+    pub(crate) fn encode_message_view(
+        &self,
+        tags: &[&str],
+    ) -> Result<crate::view::MessageView, Error> {
+        if self.value().kind() != sys::LITE3_TYPE_OBJECT {
+            return Err(Error::new(ErrorKind::Usage).with_message("data must be object"));
+        }
+        let mut builder = builder::Builder::new(tags)?;
+        builder.copy_parsed(unsafe { sys::plasmite_json_root(self.ptr.as_ptr()) })?;
+        // Preparation and the copy walk checked text, finite/exact numbers,
+        // object shape and envelope-relative depth; setters keep unique keys.
+        unsafe { builder.finish_proven() }
+    }
+
+    fn build(&self, max_bytes: usize, tags: Option<&[sys::TextRef]>) -> Result<Lite3Buf, Error> {
+        // Structural sizing includes the envelope and tags. Retain one parsed
+        // document across capacity retries; every attempt starts with empty storage.
+        let extra = tags.map_or(0, |t| {
+            (t.len() + 6) * 32 + t.iter().map(|t| t.len).sum::<usize>()
+        });
+        let mut capacity = self
+            .source_len
+            .saturating_add(self.values.saturating_mul(32))
+            .saturating_add(64)
+            .saturating_add(extra)
+            .max(256)
+            .min(max_bytes);
+        loop {
+            #[cfg(test)]
+            ENCODE_STATS.with(|stats| {
+                let (p, a, b) = stats.get();
+                stats.set((p, a + 1, b + capacity));
+            });
+            let mut bytes = vec![0; capacity];
+            let mut len = 0;
+            let result = unsafe {
+                match tags {
+                    Some(tags) => sys::plasmite_json_message_build(
+                        self.ptr.as_ptr(),
+                        tags.as_ptr(),
+                        tags.len(),
+                        bytes.as_mut_ptr(),
+                        &mut len,
+                        capacity,
+                    ),
+                    None => sys::plasmite_lite3_json_build(
+                        self.ptr.as_ptr(),
+                        bytes.as_mut_ptr(),
+                        &mut len,
+                        capacity,
+                    ),
+                }
+            };
+            if result == 0 {
+                bytes.truncate(len);
+                return Ok(Lite3Buf { bytes });
+            }
+            let errno = unsafe { sys::plasmite_lite3_last_errno() };
+            if errno != libc::ENOBUFS {
+                return Err(json_encoding_error());
+            }
+            if capacity == max_bytes {
+                return Err(
+                    Error::new(ErrorKind::Usage).with_message("lite3 buffer exceeded max size")
+                );
+            }
+            capacity = capacity.saturating_mul(2).min(max_bytes);
+        }
     }
 }
 
@@ -159,6 +273,10 @@ impl<'a> Lite3DocRef<'a> {
         get_key_offset_at(self.bytes, ofs, key)
     }
 
+    pub(crate) fn key_offset_cstr_at(&self, ofs: usize, key: &CStr) -> Result<usize, Error> {
+        get_key_offset_cstr_at(self.bytes, ofs, key)
+    }
+
     pub fn count_at(&self, ofs: usize) -> Result<u32, Error> {
         array_count(self.bytes, ofs)
     }
@@ -168,6 +286,10 @@ impl<'a> Lite3DocRef<'a> {
     }
 
     pub fn array_string_at(&self, ofs: usize, index: u32) -> Result<String, Error> {
+        self.array_str_at(ofs, index).map(str::to_owned)
+    }
+
+    pub(crate) fn array_str_at(&self, ofs: usize, index: u32) -> Result<&'a str, Error> {
         let mut out_ptr: *const std::os::raw::c_char = std::ptr::null();
         let mut out_len: usize = 0;
         let ret = unsafe {
@@ -191,7 +313,7 @@ impl<'a> Lite3DocRef<'a> {
                 .with_message("invalid utf-8")
                 .with_source(err)
         })?;
-        Ok(text.to_string())
+        Ok(text)
     }
 
     pub fn bool_at_key(&self, ofs: usize, key: &str) -> Result<bool, Error> {
@@ -243,7 +365,16 @@ impl<'a> Lite3DocRef<'a> {
         Ok(value)
     }
 
-    pub fn validate(&self) -> Result<(), Error> {
+    pub(crate) fn validate_readability_at(&self, ofs: usize) -> Result<(), Error> {
+        match unsafe { sys::plasmite_lite3_verify_json(self.bytes.as_ptr(), self.bytes.len(), ofs) }
+        {
+            0 => Ok(()),
+            1 => self.to_json_at(ofs, false).map(|_| ()),
+            _ => Err(Error::new(ErrorKind::Corrupt).with_message("failed to decode lite3")),
+        }
+    }
+
+    fn validate_shape(&self, data_kind: ErrorKind) -> Result<usize, Error> {
         let root_type =
             unsafe { sys::plasmite_lite3_get_root_type(self.bytes.as_ptr(), self.bytes.len()) };
         if root_type != sys::LITE3_TYPE_OBJECT {
@@ -251,30 +382,13 @@ impl<'a> Lite3DocRef<'a> {
         }
 
         let meta_type = unsafe {
-            sys::plasmite_lite3_get_type(
-                self.bytes.as_ptr(),
-                self.bytes.len(),
-                0,
-                c_key("meta")?.as_ptr(),
-            )
+            sys::plasmite_lite3_get_type(self.bytes.as_ptr(), self.bytes.len(), 0, c"meta".as_ptr())
         };
         if meta_type != sys::LITE3_TYPE_OBJECT {
             return Err(Error::new(ErrorKind::Corrupt).with_message("meta is not object"));
         }
 
-        let data_type = unsafe {
-            sys::plasmite_lite3_get_type(
-                self.bytes.as_ptr(),
-                self.bytes.len(),
-                0,
-                c_key("data")?.as_ptr(),
-            )
-        };
-        if data_type != sys::LITE3_TYPE_OBJECT {
-            return Err(Error::new(ErrorKind::Corrupt).with_message("data is not object"));
-        }
-
-        let meta_ofs = match get_key_offset(self.bytes, "meta") {
+        let meta_ofs = match get_key_offset_cstr_at(self.bytes, 0, c"meta") {
             Ok(ofs) => ofs,
             Err(err) => return Err(err.with_message("missing meta")),
         };
@@ -284,28 +398,52 @@ impl<'a> Lite3DocRef<'a> {
                 self.bytes.as_ptr(),
                 self.bytes.len(),
                 meta_ofs,
-                c_key("tags")?.as_ptr(),
+                c"tags".as_ptr(),
             )
         };
         if tags_type != sys::LITE3_TYPE_ARRAY {
             return Err(Error::new(ErrorKind::Corrupt).with_message("meta.tags must be array"));
         }
 
-        let tags_ofs = get_key_offset_at(self.bytes, meta_ofs, "tags")
+        let tags_ofs = get_key_offset_cstr_at(self.bytes, meta_ofs, c"tags")
             .map_err(|err| err.with_message("missing meta.tags"))?;
 
         let count = array_count(self.bytes, tags_ofs)?;
         for index in 0..count {
-            self.array_string_at(tags_ofs, index)
+            self.array_str_at(tags_ofs, index)
                 .map_err(|err| err.with_message("meta.tags must be string array"))?;
         }
 
         // Outer fields can be valid while nested data cannot produce a readable
         // message. Check that data before any append can commit its bytes.
-        let data_ofs = self.key_offset("data")?;
-        self.to_json_at(data_ofs, false)?;
+        self.message_data_offset(data_kind)
+    }
 
-        Ok(())
+    pub(crate) fn message_data_offset(&self, data_kind: ErrorKind) -> Result<usize, Error> {
+        let offset = self
+            .key_offset_cstr_at(0, c"data")
+            .map_err(|err| err.with_message("missing data"))?;
+        match self.bytes.get(offset) {
+            Some(&sys::LITE3_TYPE_OBJECT) => Ok(offset),
+            Some(&kind) if kind < sys::LITE3_TYPE_INVALID => {
+                Err(Error::new(data_kind).with_message("data is not object"))
+            }
+            _ => Err(Error::new(ErrorKind::Corrupt).with_message("invalid data")),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        let data = self.validate_shape(ErrorKind::Corrupt)?;
+        self.validate_readability_at(data)
+    }
+
+    /// Establish readability for an immutable view, including the whole envelope.
+    pub(crate) fn validate_view(&self) -> Result<(), Error> {
+        self.validate_shape(ErrorKind::Corrupt)?;
+        match unsafe { sys::plasmite_lite3_verify_json(self.bytes.as_ptr(), self.bytes.len(), 0) } {
+            0 | 1 => Ok(()),
+            _ => Err(Error::new(ErrorKind::Corrupt).with_message("invalid lite3 message view")),
+        }
     }
 }
 
@@ -342,6 +480,12 @@ pub fn validate_bytes(buf: &[u8]) -> Result<(), Error> {
     Lite3DocRef::new(buf).validate()
 }
 
+pub(crate) fn validate_feed_bytes(buf: &[u8]) -> Result<(), Error> {
+    let doc = Lite3DocRef::new(buf);
+    let data = doc.validate_shape(ErrorKind::Usage)?;
+    doc.validate_readability_at(data)
+}
+
 fn c_key(key: &str) -> Result<CString, Error> {
     CString::new(key).map_err(|err| {
         Error::new(ErrorKind::Usage)
@@ -355,13 +499,17 @@ fn get_key_offset(bytes: &[u8], key: &str) -> Result<usize, Error> {
 }
 
 fn get_key_offset_at(bytes: &[u8], ofs: usize, key: &str) -> Result<usize, Error> {
+    get_key_offset_cstr_at(bytes, ofs, &c_key(key)?)
+}
+
+fn get_key_offset_cstr_at(bytes: &[u8], ofs: usize, key: &CStr) -> Result<usize, Error> {
     let mut out_ofs: usize = 0;
     let ret = unsafe {
         sys::plasmite_lite3_get_val_ofs(
             bytes.as_ptr(),
             bytes.len(),
             ofs,
-            c_key(key)?.as_ptr(),
+            key.as_ptr(),
             &mut out_ofs as *mut usize,
         )
     };
@@ -428,6 +576,329 @@ pub(crate) fn json_counter_snapshot() -> (usize, usize) {
 mod tests {
     use super::{Lite3Buf, Lite3DocRef, encode_message, validate_bytes};
     use serde_json::json;
+
+    #[test]
+    fn encoding_parses_once_and_matches_the_pinned_decoder() {
+        let fixtures = [
+            json!({"x": 1}),
+            json!((1000..2000).collect::<Vec<_>>()),
+            json!(
+                (0..100)
+                    .map(|i| (format!("key{i}"), json!({"nested": [i, true, "α"]})))
+                    .collect::<serde_json::Map<_, _>>()
+            ),
+            json!({"text": "x".repeat(40000)}),
+            json!({"empty": "", "zero": "a\u{0000}b", "large": u64::MAX, "float": -0.0}),
+            json!(null),
+            json!(42),
+            json!("scalar"),
+        ];
+        for fixture in fixtures {
+            let json = serde_json::to_string(&fixture).unwrap();
+            super::ENCODE_STATS.with(|stats| stats.set((0, 0, 0)));
+            let encoded = Lite3Buf::from_json_str(&json).unwrap();
+            let (parses, attempts, requested) = super::ENCODE_STATS.with(|stats| stats.get());
+            assert_eq!(parses, 1);
+            assert!(attempts >= 1 && requested >= encoded.len());
+            if fixture.is_array() {
+                assert!(attempts >= 2);
+            }
+            let mut legacy = vec![0; encoded.len().max(256)];
+            let mut len = 0;
+            assert_eq!(
+                unsafe {
+                    super::sys::plasmite_lite3_json_dec(
+                        json.as_ptr().cast(),
+                        json.len(),
+                        legacy.as_mut_ptr(),
+                        &mut len,
+                        legacy.len(),
+                    )
+                },
+                0
+            );
+            legacy.truncate(len);
+            assert_eq!(encoded.as_slice(), legacy);
+        }
+        let oversized = format!(r#"{{"x":"{}"}}"#, "a".repeat(65536));
+        assert!(Lite3Buf::from_json_str_with_limit(&oversized, 65536).is_err());
+        // A large operation retains no scratch allocation for the next one.
+        super::ENCODE_STATS.with(|stats| stats.set((0, 0, 0)));
+        for _ in 0..100 {
+            Lite3Buf::from_json_str("{}").unwrap();
+        }
+        assert_eq!(
+            super::ENCODE_STATS.with(|stats| stats.get()),
+            (100, 100, 25600)
+        );
+    }
+
+    #[test]
+    fn parsed_input_retains_exact_receipt_and_builds_one_message() {
+        let input = br#"{"a":1,"a":2,"zero":-0,"text":"a\u0000b","wide":18446744073709551615}"#;
+        super::ENCODE_STATS.with(|stats| stats.set((0, 0, 0)));
+        let parsed = super::ParsedJson::parse(input).unwrap();
+        let receipt = serde_json::to_value(parsed.value()).unwrap();
+        assert_eq!(receipt["a"], 2);
+        assert_eq!(receipt["wide"].as_u64(), Some(u64::MAX));
+        assert_eq!(
+            receipt["zero"].as_f64().unwrap().to_bits(),
+            (-0.0_f64).to_bits()
+        );
+        let encoded = parsed.encode_message(&["sensor", "α"]).unwrap();
+        encoded.as_doc().validate_view().unwrap();
+        let stored: serde_json::Value =
+            serde_json::from_str(&encoded.as_doc().to_json(false).unwrap()).unwrap();
+        assert_eq!(stored["data"]["a"], 2);
+        assert_eq!(stored["meta"]["tags"], json!(["sensor", "α"]));
+        assert_eq!(stored["data"]["text"], "a\u{0000}b");
+        assert_eq!(super::ENCODE_STATS.with(|stats| stats.get().0), 1);
+        assert!(super::ParsedJson::parse(br#"{"bad\u0000key":1}"#).is_err());
+    }
+
+    #[test]
+    fn view_encoder_grows_and_enforces_exact_integer_policy() {
+        let text = format!(
+            r#"{{"items":[{}],"zero":-0,"text":"α\u0000b"}}"#,
+            (0..2000)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let parsed = super::ParsedJson::parse(text.as_bytes()).unwrap();
+        let view = parsed.encode_message_view(&["sensor"]).unwrap();
+        assert!(view.bytes().len() > 256);
+        let data: serde_json::Value =
+            serde_json::from_slice(&view.data().to_json().unwrap()).unwrap();
+        assert_eq!(data["items"][1999], 1999);
+        assert_eq!(
+            data["zero"].as_f64().unwrap().to_bits(),
+            (-0.0_f64).to_bits()
+        );
+        assert_eq!(data["text"], "α\u{0000}b");
+        for number in [
+            "9223372036854775808",
+            "18446744073709551615",
+            "18446744073709551616",
+            "-9223372036854775809",
+        ] {
+            let text = format!("{{\"x\":{number}}}");
+            assert!(
+                super::ParsedJson::parse_view(text.as_bytes())
+                    .and_then(|parsed| parsed.encode_message_view(&[]))
+                    .is_err()
+            );
+        }
+        let exact = super::ParsedJson::parse(br#"{"x":9223372036854775807,"x":4}"#).unwrap();
+        let view = exact.encode_message_view(&[]).unwrap();
+        assert_eq!(view.data().entries().unwrap().len(), 1);
+        assert_eq!(view.data().get("x").unwrap().unwrap().integer().unwrap(), 4);
+    }
+
+    #[test]
+    fn independent_encoders_share_no_document_or_scratch() {
+        let workers = (0..4)
+            .map(|id| {
+                std::thread::spawn(move || {
+                    for n in 0..100 {
+                        let value =
+                            json!({"id": id, "n": n, "values": (0..100).collect::<Vec<_>>()});
+                        let json = serde_json::to_string(&value).unwrap();
+                        let encoded = Lite3Buf::from_json_str(&json).unwrap();
+                        let decoded: serde_json::Value =
+                            serde_json::from_str(&encoded.as_doc().to_json(false).unwrap())
+                                .unwrap();
+                        assert_eq!(value, decoded);
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn encoding_tries_the_exact_limit_before_rejecting() {
+        let limit = 64 * 1024;
+        let overestimated = format!(r#"{{"x":"{}"}}"#, "a".repeat(40_000));
+        assert!(overestimated.len() * 2 > limit);
+        assert!(Lite3Buf::from_json_str_with_limit(&overestimated, limit).is_ok());
+        let expanded = serde_json::to_string(&(1000..2000).collect::<Vec<_>>()).unwrap();
+        let encoded = Lite3Buf::from_json_str_with_limit(&expanded, limit).unwrap();
+        assert!(encoded.len() > expanded.len() * 2 * 4);
+        let oversized = format!(r#"{{"x":"{}"}}"#, "a".repeat(limit));
+        assert!(
+            Lite3Buf::from_json_str_with_limit(&oversized, limit)
+                .unwrap_err()
+                .message()
+                .unwrap()
+                .contains("exceeded max")
+        );
+        assert!(
+            Lite3Buf::from_json_str_with_limit("{", limit)
+                .unwrap_err()
+                .message()
+                .unwrap()
+                .contains("failed to encode")
+        );
+    }
+
+    #[test]
+    fn encoding_borrows_only_the_supplied_json_slice() {
+        let storage = r#"{"x":1}not JSON"#;
+        let encoded = Lite3Buf::from_json_str(&storage[..7]).expect("bounded input");
+        assert_eq!(encoded.as_doc().to_json(false).unwrap(), r#"{"x":1}"#);
+        let error = Lite3Buf::from_json_str("{\"x\":1}\0").unwrap_err();
+        assert_eq!(error.message(), Some("json contains null"));
+    }
+
+    #[test]
+    fn binary_readability_matches_export_for_utf8_keys_and_values() {
+        let buf = encode_message(&[], &json!({"key_utf8_probe": "value_utf8_probe"})).unwrap();
+        let data = buf.as_doc().key_offset("data").unwrap();
+        for marker in [b"key_utf8_probe".as_slice(), b"value_utf8_probe".as_slice()] {
+            let start = buf
+                .as_slice()
+                .windows(marker.len())
+                .position(|s| s == marker)
+                .unwrap();
+            for pair in 0..=u16::MAX {
+                let mut bytes = buf.as_slice().to_vec();
+                bytes[start..start + 2].copy_from_slice(&pair.to_ne_bytes());
+                let doc = Lite3DocRef::new(&bytes);
+                let exported = doc
+                    .to_json_at(data, false)
+                    .map(|s| serde_json::from_str::<serde::de::IgnoredAny>(&s).is_ok())
+                    .unwrap_or(false);
+                assert_eq!(
+                    doc.validate_readability_at(data).is_ok(),
+                    exported,
+                    "{marker:?}: {pair:x}"
+                );
+            }
+            for prefix in [
+                &[0xe0, 0xa0, 0x80][..],
+                &[0xed, 0x9f, 0xbf],
+                &[0xed, 0xa0, 0x80],
+                &[0xf0, 0x90, 0x80, 0x80],
+                &[0xf0, 0x8f, 0xbf, 0xbf],
+                &[0xf4, 0x8f, 0xbf, 0xbf],
+                &[0xf4, 0x90, 0x80, 0x80],
+                &[0xe2, 0x82, 0xac],
+                &[0xf0, 0x9f, 0x98, 0x80],
+            ] {
+                let mut bytes = buf.as_slice().to_vec();
+                bytes[start..start + prefix.len()].copy_from_slice(prefix);
+                let doc = Lite3DocRef::new(&bytes);
+                let exported = doc.to_json_at(data, false).is_ok();
+                assert_eq!(
+                    doc.validate_readability_at(data).is_ok(),
+                    exported,
+                    "{prefix:x?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn long_ascii_runs_still_validate_multibyte_boundaries() {
+        for offset in [7, 8, 31, 32, 39, 40, 63, 64, 95, 96] {
+            let text = format!("{}🜁{}", "x".repeat(offset), "y".repeat(128 - offset));
+            let encoded = encode_message(&[], &json!({"text": text})).unwrap();
+            let mut bytes = encoded.as_slice().to_vec();
+            let data = Lite3DocRef::new(&bytes).key_offset("data").unwrap();
+            assert!(
+                Lite3DocRef::new(&bytes)
+                    .validate_readability_at(data)
+                    .is_ok()
+            );
+            let marker = "🜁".as_bytes();
+            let start = bytes
+                .windows(marker.len())
+                .position(|p| p == marker)
+                .unwrap();
+            bytes[start + 1] = 0xff;
+            assert!(
+                Lite3DocRef::new(&bytes)
+                    .validate_readability_at(data)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn json_round_trips_stored_float_bits() {
+        let mut bits = 541u64;
+        for _ in 0..10000 {
+            bits ^= bits << 13;
+            bits ^= bits >> 7;
+            bits ^= bits << 17;
+            let value = f64::from_bits(bits);
+            if !value.is_finite() {
+                continue;
+            }
+            let payload = encode_message(&[], &json!({"number":value})).unwrap();
+            let doc = payload.as_doc();
+            let data = doc.key_offset("data").unwrap();
+            let exported = doc.to_json_at(data, false).unwrap();
+            let parsed: serde_json::Value = serde_json::from_str(&exported).unwrap();
+            assert_eq!(
+                parsed["number"].as_f64().unwrap().to_bits(),
+                value.to_bits(),
+                "{exported}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_bytes_keep_the_legacy_export_validation() {
+        let buf = encode_message(&[], &json!({"blob": "bytes including zero"})).unwrap();
+        let data = buf.as_doc().key_offset("data").unwrap();
+        let value = buf.as_doc().key_offset_at(data, "blob").unwrap();
+        let mut bytes = buf.as_slice().to_vec();
+        // String and byte values share their length-prefixed storage. Treat the
+        // terminator as one more byte, which the legacy exporter base64-encodes.
+        bytes[value] = super::sys::LITE3_TYPE_BYTES;
+        let doc = Lite3DocRef::new(&bytes);
+        assert_eq!(
+            unsafe { super::sys::plasmite_lite3_verify_json(bytes.as_ptr(), bytes.len(), data) },
+            1
+        );
+        assert!(doc.to_json_at(data, false).is_ok());
+        assert!(doc.validate_readability_at(data).is_ok());
+    }
+
+    #[test]
+    fn binary_readability_matches_export_for_float_extremes() {
+        let number = f64::from_bits(0x3ff1_2345_6789_abcd);
+        let buf = encode_message(&[], &json!({"number": number})).unwrap();
+        let data = buf.as_doc().key_offset("data").unwrap();
+        let start = buf
+            .as_slice()
+            .windows(8)
+            .position(|s| s == number.to_ne_bytes())
+            .unwrap();
+        for value in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MAX,
+            f64::MIN,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            -0.0,
+        ] {
+            let mut bytes = buf.as_slice().to_vec();
+            bytes[start..start + 8].copy_from_slice(&value.to_ne_bytes());
+            let doc = Lite3DocRef::new(&bytes);
+            assert_eq!(
+                doc.validate_readability_at(data).is_ok(),
+                doc.to_json_at(data, false).is_ok(),
+                "{value}"
+            );
+        }
+    }
 
     #[test]
     fn round_trip_json() {

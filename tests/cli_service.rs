@@ -595,7 +595,13 @@ mod windows_upgrade {
 
     fn check_remote(row: &Value, key: &str) -> TestResult<()> {
         let client = RemoteClient::with_access_key(row["remote_url"].as_str().unwrap(), key)?;
-        let message = client.open_pool(&PoolRef::name("events"))?.get_message(1)?;
+        let frame = client
+            .open_pool(&PoolRef::name("events"), false)?
+            .fetch_lite3(plasmite::api::Read::since(plasmite::api::Since::Seq(1)))?
+            .next_frame()?
+            .ok_or("missing retained message after service upgrade")?;
+        assert_eq!(frame.seq, 1);
+        let message = plasmite::api::Message::from_lite3(frame.seq, frame.time, &frame.payload)?;
         assert_eq!(message.data, serde_json::json!({"probe": "retained"}));
         Ok(())
     }

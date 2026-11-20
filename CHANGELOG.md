@@ -4,50 +4,70 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Simpler message workflows (next major release)
+### Plasmite 2.0
 
-- Make duplex a generic two-way stream. Terminal and pipe input use feed's parser;
-  remove --me, --echo-self, built-in chat data, and sender suppression. Input EOF
-  closes sending while reception continues. Establish reception before sending.
-- Keep timed playback in CLI follow --replay and remove the separate Rust, Go,
-  Python and Node replay APIs. SDK applications control timing over ordinary streams.
-- Clamp HTTP tail waits to the server maximum and remove CLI error-text probing.
-- Replace reconstructed retry commands with concise guidance tied to the pool path.
+**Plasmite 2.0 gives the CLI and every library one small model: `feed` writes, `follow` waits for new messages, and `fetch` reads what the pool holds and stops.** Scripts, HTTP clients, MCP clients and library code written for 1.x need changes; read the [upgrade guide](docs/record/upgrading-2.0.md) first. Pool files keep their format, so existing pools open without migration.
 
-The command/API changes await a major release. Package versions remain unchanged.
-See the [migration guide](docs/record/upgrading-next-major.md) for removed symbols,
-EOF behavior, client/server compatibility, and playback examples.
+#### Breaking changes
 
-### Security maintenance
+- **Reads start at a position.** `follow` starts with the next new message and `fetch` with the oldest retained one. Both accept `--since` (a sequence, `oldest`, a duration or a time) or `--last N`, plus repeatable `--tag`. `fetch` stops at the newest message present when it opened.
+- **Local and HTTP readers report overwritten history.** `RetentionGap` gives the first missing sequence (`missing`) and the first one still retained (`next_seq`). A tag filter can't hide a gap.
+- **Feed stores an object or forwards a message.** Input shaped exactly like a Plasmite message keeps its data and tags and gets a new sequence and time at the destination.
+- **The CLI drops `tap` and the flags `--no-follow`, `--tail`, `--timeout` (including on `duplex`), `--replay`, `--where`, `--file`, `--create-size`, `--retry`, `--retry-delay`, `--quiet-drops`, `--no-notify`, `--me` and `--echo-self`.** Use `fetch` or `--last` for history, `feed --input-format lines` to capture command output, and the shell for timeouts and retries. `follow --one` stays.
+- **HTTP pool operations move to `/v2`.** The server uses `complete`, `error` and `cutoff` records to signal the end of a read stream. Clients continue from a `cutoff` automatically. Upgrade servers and clients together.
+- **MCP renames `plasmite_read` and `plasmite_wait` to `plasmite_fetch` and `plasmite_follow`.** Results carry `next_seq` and `ended`, and loss arrives as a structured `RetentionGap` error. MCP keeps tag strings exactly, including whitespace.
+- **Libraries share names and one `time` field.** Every message carries `time` as integer Unix nanoseconds. Python and JavaScript mark a time with `plasmite.at(t)` because a bare number always means a sequence; Go uses `At`.
+- **Native libraries carry their major version in the file name:** `libplasmite.so.2`, `libplasmite.2.dylib` and `plasmite2.dll`. Bindings check `plsm_abi_major()` when they load.
+- **Framed Lite3 files start with `PLS2`.** 2.0 doesn't read `PLS1` files.
+- **Readers check pool identity** when they open from a local handle or resume an HTTP stream. A different pool with the same name produces `NotFound`.
+- **UDP follows deliver late and duplicate datagrams in arrival order.** A server-confirmed gap names the missing and retained sequences, and positional UDP `fetch` returns only the requested sequence.
 
-Check Lite3 reader node bounds and alignment before making compiler alignment
-assumptions, and correct iterator prefetch indexes for wide objects. Preserve the
-correction as a checksummed local patch over the pinned upstream snapshot.
-Linux sanitizer checks now cover both bugs and run at `-O0` and `-O2`.
+#### Faster publishing and catch-up
 
-Update the test-only `rustix` dependency to 1.1.6 for RUSTSEC-2026-0486.
-The production dependency tree does not include it.
+In these workloads, all five language interfaces published more small events per second, handled more structured records and caught up faster on retained history. Median messages per second, 1.3.0 → 2.0 development build:
 
-### Breaking UDP follow behavior (next major release)
+| Language | Publish heartbeats | Write and read telemetry | Replay large log messages |
+| --- | ---: | ---: | ---: |
+| Rust | 89,200 → 404,900 | 42,100 → 77,200 | 100,000 → 423,600 |
+| C | 92,400 → 309,200 | 31,700 → 68,200 | 60,900 → 230,400 |
+| Python | 55,700 → 90,600 | 17,800 → 24,400 | 28,700 → 42,400 |
+| JavaScript / Node.js | 64,100 → 84,800 | 13,900 → 23,200 | 27,100 → 33,400 |
+| Go | 79,500 → 213,800 | 22,600 → 38,200 | 28,300 → 54,600 |
 
-UDP follow now delivers matching messages in arrival order, including late
-messages and duplicates. Consumers choose whether to reorder or discard them.
-Sequence jumps and progress no longer create inferred gaps or suppress DATA;
-gap events report explicit server skips. The client preserves exact skip
-ranges and reasons and reports retention flags without inventing a range.
+Each workload ran seven times per version on one Apple M5 Pro Mac through the ordinary local APIs. The publisher wrote 25,000 heartbeats and received a complete message for each write. The telemetry workload wrote and read back 12,000 messages with 16 sensor readings each. The replay read 4,000 preloaded messages of 16 KiB each. Node.js can now run other callbacks during a replay.
 
-Finite reads finish on terminal progress after draining accepted events.
-Packets still in flight may go unread, and exit 0 gives no assurance of complete
-delivery. Observed oversized/pressure skips still exit 1; confirmed retention
-gaps exit 9. Local and HTTP tails retain their ordering contracts. The wire
-format and public layouts remain unchanged. This reverses documented 1.x
-client behavior and requires a major release under the compatibility policy.
+Peak memory stayed within about 1 MiB for Rust, C and Go and rose 1–4 MiB for Python. Node.js used less in every workload, 44% less when replaying large messages. Median peak resident memory in MiB, 1.3.0 → 2.0 development build:
 
-Finite UDP completion now releases its reader worker and pool mapping. A bounded
-completion record keeps only the metadata and original file identity needed to
-answer renewals until close or expiry. Both receive phases share packet and event
-handling. Public `Gap` names remain compatibility labels for server skips;
-`Unknown` remains reserved and clients reject it as a wire skip reason.
+| Language | Publish heartbeats | Write and read telemetry | Replay large log messages |
+| --- | ---: | ---: | ---: |
+| Rust | 16.7 → 17.1 | 45.5 → 46.0 | 67.5 → 67.1 |
+| C | 16.8 → 17.7 | 87.9 → 89.0 | 67.7 → 67.5 |
+| Python | 36.6 → 39.8 | 107.7 → 111.1 | 87.5 → 88.7 |
+| JavaScript / Node.js | 77.2 → 67.2 | 175.8 → 136.0 | 199.9 → 112.4 |
+| Go | 26.7 → 27.5 | 98.5 → 99.2 | 77.2 → 77.1 |
+
+The [language interface guide](docs/performance/language-interfaces.md) covers more workloads and how to choose a read path.
+
+#### Other improvements
+
+- **Local writes wake waiting followers** on Linux, Windows and macOS 14.4 or newer. In the Windows VM measurements, four-reader paced delivery fell from about 50 ms to 2.5 ms at p95. At saturation those readers drained 11–15% fewer messages per second.
+- **Owned message views** in Rust, C, Python, JavaScript and Go read encoded data without converting it, and outlive the pool or stream that produced them. Direct native writers, whole-message forwarding and bounded Python batches come with them. View writers reject integers outside signed 64 bits.
+- **JSON reads keep stored floating-point values exactly.** C JSON reads format messages directly from storage, and Rust parses JSON floats with correct rounding. Applications that compare exact float text should check the [upgrade guide](docs/record/upgrading-2.0.md).
+- **Binary `follow --tag`** checks tags and validates the payload without building a decoded data tree. Rust adds `Meta::from_lite3`.
+- **Local appends are cheaper.** Native streams use notifications in place of 50 ms polling; median paced Python delivery latency fell from 26.9 ms to 4.2 ms. Each pool derives its notification name once, which raised one Mac's Python producer/reader throughput 54%. See the [pipe comparison](docs/performance/pipe-comparison.md).
+- **Every client finds the same pools.** The default directory is `~/.plasmite/pools` on every platform, with no silent fallback to the working or temporary directory. Pools created under an earlier fallback stay where they are; the upgrade guide explains how to find them.
+- **Windows paths work everywhere.** Drive, UNC and backslash paths resolve the same way through the native interface.
+- **Node errors keep exact sequence numbers** as `bigint`.
+- **The browser notices a replaced pool file** and resets to the new file's history.
+- **`doctor` reports agree with themselves,** using counts captured during validation.
+- **Data that fits the encoder limit is accepted** at the exact allocation cap.
+
+#### Development and security
+
+- Development commands start after the server reports its listeners, and clean up the processes they own.
+- Offline tests cover release-build selection and provenance rejection, including moved tags.
+- Lite3 checks reader node bounds and alignment, with corrected iterator prefetch indexes for wide objects, as a checksummed patch over the pinned upstream snapshot. Linux sanitizer runs cover both bugs at `-O0` and `-O2`.
+- The test-only `rustix` dependency moves to 1.1.6 for RUSTSEC-2026-0486.
 
 ## [1.3.0] - 2026-11-10
 
@@ -88,7 +108,7 @@ plasmite feed source --create-size 1M --tag sensor '{"temperature":21}'
 plasmite follow source --no-follow | plasmite feed destination --create-size 1M
 ```
 
-See the [CLI documentation](docs/cli.md#creating-messages) for input rules and the reserved message shape.
+See the [CLI documentation](https://github.com/sandover/plasmite/blob/v1.2.0/docs/cli.md#creating-messages) for input rules and the reserved message shape.
 
 ## [1.2.0] - 2026-10-13
 
@@ -97,7 +117,7 @@ complete-message CLI pipes, and YAML input/output.
 
 **This release includes breaking CLI changes despite the minor version number.**
 Existing pool files, HTTP and MCP formats, and existing language API behavior
-remain compatible. Read the [CLI upgrade guide](docs/record/upgrading-1.2.md)
+remain compatible. Read the [CLI upgrade guide](https://github.com/sandover/plasmite/blob/v1.2.0/docs/record/upgrading-1.2.md)
 before updating scripts.
 
 ### CLI message pipes

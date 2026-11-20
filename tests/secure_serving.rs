@@ -115,9 +115,9 @@ fn local_responses_include_the_remote_protocol_version() -> Result<(), Box<dyn s
     let temp = tempfile::tempdir()?;
     let server = TestServer::try_start(temp.path())?;
 
-    for path in ["/healthz", "/v0/pools"] {
+    for (path, version) in [("/healthz", "0"), ("/v2/pools", "2")] {
         let response = ureq::get(&format!("{}{path}", server.local_url)).call()?;
-        assert_eq!(response.header("plasmite-version"), Some("0"));
+        assert_eq!(response.header("plasmite-version"), Some(version), "{path}");
     }
     Ok(())
 }
@@ -199,7 +199,7 @@ fn serve_exits_successfully_after_sigterm() -> Result<(), Box<dyn std::error::Er
 }
 
 #[test]
-fn mcp_stdio_uses_the_2025_handshake_and_shared_pool_tools() {
+fn mcp_stdio_rejects_obsolete_handshake_without_enabling_legacy_requests() {
     let temp = tempfile::tempdir().expect("tempdir");
     let pool_dir = temp.path().join("pools");
     let mut child = cli()
@@ -213,61 +213,39 @@ fn mcp_stdio_uses_the_2025_handshake_and_shared_pool_tools() {
 
     send_mcp(
         &mut stdin,
-        &json!({
-            "jsonrpc":"2.0","id":1,"method":"initialize",
-            "params":{
-                "protocolVersion":"2025-11-25",
-                "capabilities":{},
-                "clientInfo":{"name":"test","version":"1"}
-            }
-        }),
+        &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "protocolVersion":"2025-11-25","capabilities":{},
+            "clientInfo":{"name":"test","version":"1"}
+        }}),
     );
-    let initialized = read_mcp(&mut stdout);
-    assert_eq!(initialized["id"], json!(1));
-    assert_eq!(
-        initialized["result"]["protocolVersion"],
-        json!("2025-11-25")
-    );
-    assert_eq!(
-        initialized["result"]["capabilities"]["tools"]["listChanged"],
-        json!(false)
-    );
-    assert_eq!(
-        initialized["result"]["capabilities"]["resources"]["subscribe"],
-        json!(false)
-    );
+    let obsolete = read_mcp(&mut stdout);
+    assert_eq!(obsolete["id"], 1);
+    assert_eq!(obsolete["error"]["code"], -32601);
+    let message = obsolete["error"]["message"].as_str().unwrap();
+    assert!(message.contains("2026-07-28") && message.contains("server/discover"));
 
     send_mcp(
         &mut stdin,
         &json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
     );
-
     send_mcp(
         &mut stdin,
-        &json!({
-            "jsonrpc":"2.0","id":2,"method":"tools/list","params":{}
-        }),
+        &json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
     );
-    assert_eq!(
-        read_mcp(&mut stdout)["result"]["tools"][0]["name"],
-        json!("plasmite_pool_list")
-    );
-
+    let reply = read_mcp(&mut stdout);
+    assert_eq!(reply["id"], 2);
+    assert_eq!(reply["error"]["code"], -32602);
     send_mcp(
         &mut stdin,
-        &json!({
-            "jsonrpc":"2.0","id":3,"method":"tools/call",
-            "params":{
-                "name":"plasmite_pool_create",
-                "arguments":{"name":"demo"}
-            }
-        }),
+        &json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{"_meta":{
+            "io.modelcontextprotocol/protocolVersion":"2025-11-25",
+            "io.modelcontextprotocol/clientCapabilities":{}
+        }}}),
     );
-    let created = read_mcp(&mut stdout);
-    assert_eq!(
-        created["result"]["structuredContent"]["pool"]["name"],
-        json!("demo")
-    );
+    let reply = read_mcp(&mut stdout);
+    assert_eq!(reply["id"], 3);
+    assert_eq!(reply["error"]["code"], -32022);
+    assert_eq!(reply["error"]["data"]["supported"], json!(["2026-07-28"]));
 
     drop(stdin);
     let started = Instant::now();
@@ -282,4 +260,123 @@ fn mcp_stdio_uses_the_2025_handshake_and_shared_pool_tools() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn mcp_stdio_uses_modern_requests_without_handshake() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let mut child = cli()
+        .args(["--dir", temp.path().to_str().unwrap(), "mcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn MCP server");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let mut call = |id, method, mut params: Value| {
+        params["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {}
+        });
+        send_mcp(
+            &mut stdin,
+            &json!({"jsonrpc":"2.0", "id":id, "method":method, "params":params}),
+        );
+        read_mcp(&mut stdout)
+    };
+    let tools = call(1, "tools/list", json!({}));
+    assert_eq!(tools["result"]["resultType"], "complete");
+    assert_eq!(tools["result"]["tools"][0]["name"], "plasmite_pool_list");
+    let discover = call(2, "server/discover", json!({}));
+    assert_eq!(
+        discover["result"]["supportedVersions"],
+        json!(["2026-07-28"])
+    );
+    assert_eq!(
+        discover["result"]["capabilities"],
+        json!({"tools":{}, "resources":{}})
+    );
+    assert_eq!(
+        discover["result"]["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "plasmite"
+    );
+
+    let feed = call(
+        3,
+        "tools/call",
+        json!({"name":"plasmite_feed", "arguments":{"pool":"project","create":true,"data":{"handoff":"review"}}}),
+    );
+    assert_eq!(feed["result"]["structuredContent"]["message"]["seq"], 1);
+    let fetch = call(
+        4,
+        "tools/call",
+        json!({"name":"plasmite_fetch", "arguments":{"pool":"project","since":"oldest"}}),
+    );
+    assert_eq!(
+        fetch["result"]["structuredContent"]["messages"][0]["data"]["handoff"],
+        "review"
+    );
+    let resource = call(
+        5,
+        "resources/read",
+        json!({"uri":"plasmite:///pools/project"}),
+    );
+    assert_eq!(
+        resource["result"]["contents"][0]["uri"],
+        "plasmite:///pools/project"
+    );
+    assert_eq!(
+        call(
+            6,
+            "resources/read",
+            json!({"uri":"plasmite:///pools/missing"})
+        )["error"]["code"],
+        -32602
+    );
+
+    send_mcp(
+        &mut stdin,
+        &json!({"jsonrpc":"2.0","id":7,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"1900-01-01"}}}),
+    );
+    let unsupported = read_mcp(&mut stdout);
+    assert_eq!(unsupported["error"]["code"], -32022);
+    assert_eq!(
+        unsupported["error"]["data"],
+        json!({"requested":"1900-01-01","supported":["2026-07-28"]})
+    );
+    send_mcp(
+        &mut stdin,
+        &json!({"jsonrpc":"2.0","id":8,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}),
+    );
+    assert_eq!(read_mcp(&mut stdout)["error"]["code"], -32602);
+    send_mcp(
+        &mut stdin,
+        &json!({"jsonrpc":"2.0","id":9,"method":"tools/list"}),
+    );
+    assert_eq!(read_mcp(&mut stdout)["error"]["code"], -32602);
+    let meta = json!({
+        "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities":{}
+    });
+    send_mcp(
+        &mut stdin,
+        &json!({"jsonrpc":"2.0","id":10,"method":"tools/call","params":{
+            "_meta":meta, "name":"plasmite_follow","arguments":{"pool":"project","timeout_ms":3000}
+        }}),
+    );
+    std::thread::sleep(Duration::from_millis(50));
+    let start = Instant::now();
+    send_mcp(
+        &mut stdin,
+        &json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":10}}),
+    );
+    send_mcp(
+        &mut stdin,
+        &json!({"jsonrpc":"2.0","id":11,"method":"ping","params":{"_meta":meta}}),
+    );
+    assert_eq!(read_mcp(&mut stdout)["id"], 11);
+    assert!(start.elapsed() < Duration::from_secs(2));
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
 }

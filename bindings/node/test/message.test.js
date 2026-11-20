@@ -1,11 +1,30 @@
 /* Exact sequence IDs at local and remote JSON boundaries. */
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { Message, parseMessage, parseMessageJson } = require("../message");
+const { Message, parseMessage, parseMessageJson, parseNativeMessage } = require("../message");
 const { RemoteClient, RemotePool } = require("../remote");
 
 const time = "2026-01-01T00:00:00Z";
 const sequences = ["9007199254740992", "9007199254740993", "18446744073709551615"];
+test("native parsing preserves exact identity, data numbers, and original bytes", () => {
+  for (const seq of ["0", "42", ...sequences]) {
+    const raw = Buffer.from(`{"seq":${seq},"time":"${time}","meta":{"tags":["native"]},"data":{"seq":9007199254740993,"nested":[{},[null,true]]}}`);
+    const message = parseNativeMessage(raw);
+    assert.deepEqual(message, parseMessage(raw));
+    assert.strictEqual(message.raw, raw);
+  }
+  // A changed native field order must retain the exact general parser.
+  const reordered = Buffer.from(`{"time":"${time}","seq":9007199254740993,"meta":{"tags":[]},"data":{}}`);
+  assert.deepEqual(parseNativeMessage(reordered), parseMessage(reordered));
+});
+
+test("general parsing keeps rejecting fractions that round to safe integers", () => {
+  for (const seq of ["1.00000000000000005", "-1e-9999", "9007199254740990.1"]) {
+    const raw = Buffer.from(`{"seq":${seq},"time":"${time}","meta":{"tags":[]},"data":{}}`);
+    assert.throws(() => parseMessage(raw));
+    assert.throws(() => parseNativeMessage(raw));
+  }
+});
 const numericForms = [
   ["1e2", 100n],
   ["100.0", 100n],
@@ -65,19 +84,22 @@ test("remote append, fetch, and tail preserve exact uint64 message sequences", a
       ...numericForms,
     ]) {
       global.fetch = async (url) => new Response(
-        new URL(url).pathname.endsWith("/tail")
+        !new URL(url).pathname.endsWith("/feed")
           ? `${envelope(source)}\n`
           : `{"message":${envelope(source)}}`,
         { headers: { "Content-Type": "application/json" } },
       );
       const pool = new RemotePool(new RemoteClient("http://localhost:9700"), "exact");
-      assertExact(await pool.append({ test: true }), seq);
-      assertExact(await pool.get(BigInt(seq)), seq);
+      assertExact(await pool.feed({ test: true }), seq);
+      const retained = await pool.fetch({ since: BigInt(seq) });
+      assertExact((await retained.next()).value, seq);
+      await retained.return();
       const seen = [];
-      for await (const message of pool.tail({ maxMessages: 1 })) {
+      for await (const message of await pool.follow({ since: "oldest" })) {
         assertExact(message, seq);
         assert.equal(message.raw.toString(), envelope(source));
         seen.push(message.seq);
+        break;
       }
       assert.deepEqual(seen, [BigInt(seq)]);
     }
@@ -108,15 +130,15 @@ test("raw local and remote message sequences reject invalid uint64 boundaries", 
     ]) {
       assert.throws(() => parseMessage(Buffer.from(envelope(seq))));
       global.fetch = async (url) => new Response(
-        new URL(url).pathname.endsWith("/tail")
+        !new URL(url).pathname.endsWith("/feed")
           ? `${envelope(seq)}\n`
           : `{"message":${envelope(seq)}}`,
       );
       const pool = new RemotePool(new RemoteClient("http://localhost:9700"), "invalid");
-      await assert.rejects(pool.append({}));
-      await assert.rejects(pool.get(1));
+      await assert.rejects(pool.feed({}));
+      await assert.rejects(async () => (await pool.fetch({ since: 1 })).next());
       await assert.rejects(async () => {
-        for await (const message of pool.tail()) {
+        for await (const message of await pool.follow()) {
           assert.fail(`invalid message ${message.seq} was accepted`);
         }
       });

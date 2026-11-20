@@ -10,6 +10,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -26,6 +27,19 @@ use crate::core::validate;
 const MAGIC: [u8; 4] = *b"PLSM";
 const ENDIANNESS_LE: u8 = 1;
 const HEADER_SIZE: usize = 4096;
+const NEWEST_SEQ_OFFSET: usize = 96;
+// Native waiters use a reserved word as a disposable wake-up hint.
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+const NOTIFY_OFFSET: usize = 104;
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+macro_rules! crash_before_wake_for_tests {
+    () => {
+        #[cfg(test)]
+        if std::env::var_os("PLASMITE_TEST_CRASH_BEFORE_WAKE").is_some() {
+            std::process::exit(91);
+        }
+    };
+}
 const INDEX_SLOT_BYTES: u64 = 16;
 const MAX_AUTO_INDEX_CAPACITY: u64 = 65_536;
 const MIN_RING_SIZE_FOR_INDEX: u64 = 1024;
@@ -277,8 +291,9 @@ impl PoolOptions {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Durability {
+    #[default]
     Fast,
     Flush,
 }
@@ -429,6 +444,13 @@ pub struct PoolAgeMetrics {
 
 pub struct Pool {
     path: PathBuf,
+    // Derive the canonical wake-up name once, outside the append path.
+    #[cfg(not(any(target_os = "linux", windows)))]
+    notify_name: String,
+    #[cfg(not(any(target_os = "linux", windows)))]
+    notify_writer: Option<notify::PoolSemaphore>,
+    #[cfg(windows)]
+    notify_identity: Option<String>,
     file: File,
     #[cfg(unix)]
     file_identity: (u64, u64),
@@ -524,6 +546,12 @@ impl Pool {
         let mut pool = Self {
             #[cfg(unix)]
             file_identity: unix_file_identity(&file, &path)?,
+            #[cfg(not(any(target_os = "linux", windows)))]
+            notify_name: notify::pool_semaphore_name(&path),
+            #[cfg(not(any(target_os = "linux", windows)))]
+            notify_writer: None,
+            #[cfg(windows)]
+            notify_identity: file_incarnation(&file).ok(),
             path,
             file,
             mmap,
@@ -537,7 +565,16 @@ impl Pool {
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
-        let path = path.as_ref().to_path_buf();
+        Self::open_file(path.as_ref(), None)
+    }
+
+    /// Open an independent file description for a reader on this pool.
+    pub(crate) fn reopen(&self) -> Result<Self, Error> {
+        Self::open_file(&self.path, Some(&self.file))
+    }
+
+    fn open_file(path: &Path, original: Option<&File>) -> Result<Self, Error> {
+        let path = path.to_path_buf();
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -552,6 +589,10 @@ impl Pool {
                 }
                 error
             })?;
+
+        if let Some(original) = original {
+            require_same_file(original, &file, &path)?;
+        }
 
         let metadata = file
             .metadata()
@@ -587,6 +628,12 @@ impl Pool {
                 use std::os::unix::fs::MetadataExt;
                 (metadata.dev(), metadata.ino())
             },
+            #[cfg(not(any(target_os = "linux", windows)))]
+            notify_name: notify::pool_semaphore_name(&path),
+            #[cfg(not(any(target_os = "linux", windows)))]
+            notify_writer: None,
+            #[cfg(windows)]
+            notify_identity: file_incarnation(&file).ok(),
             path,
             file,
             mmap,
@@ -610,6 +657,7 @@ impl Pool {
         Ok(header)
     }
 
+    #[cfg(not(any(target_os = "linux", windows)))]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
@@ -628,6 +676,29 @@ impl Pool {
             .with_path(&self.path)
             .with_offset(offset as u64)
             .with_hint("Run `plasmite doctor` to inspect the pool.")
+    }
+
+    /// Own a header-only mapping so a notification handle can outlive this Pool.
+    pub(crate) fn progress_watch(&self) -> Result<ProgressWatch, Error> {
+        // SAFETY: Pool creation/open validates a full header in this held file.
+        // The read/write alias exposes only atomic accesses to notification state.
+        let mmap = unsafe {
+            memmap2::MmapOptions::new()
+                .len(HEADER_SIZE)
+                .map_mut(&self.file)
+        }
+        .map_err(|error| {
+            Error::new(map_io_error_kind(&error))
+                .with_path(&self.path)
+                .with_source(error)
+        })?;
+        Ok(ProgressWatch {
+            mmap,
+            #[cfg(windows)]
+            identity: self.notify_identity.clone().ok_or_else(|| {
+                Error::new(ErrorKind::Io).with_message("pool notification identity unavailable")
+            })?,
+        })
     }
 
     pub(crate) fn read_lock(&self) -> Result<ReadLock<'_>, Error> {
@@ -650,6 +721,17 @@ impl Pool {
     /// Fail if the path no longer names this opened pool instance.
     pub fn check_current_path(&self) -> Result<(), Error> {
         require_current_path(&self.file, &self.path)
+    }
+
+    /// An opaque native file identity for detecting replacement of an opened pool.
+    /// It stays stable across appends and server restarts. A path guard prevents
+    /// reuse of the native file ID on filesystems without creation timestamps.
+    pub fn incarnation(&self) -> Result<String, Error> {
+        file_incarnation(&self.file).map_err(|err| {
+            Error::new(map_io_error_kind(&err))
+                .with_path(&self.path)
+                .with_source(err)
+        })
     }
 
     /// Release the mapping and keep only the file and path for identity checks.
@@ -689,7 +771,7 @@ impl Pool {
         &self,
         header: PoolHeader,
         seq: u64,
-    ) -> Option<(usize, crate::core::cursor::FrameRef)> {
+    ) -> Option<(usize, crate::core::cursor::FrameView<'_>)> {
         let index_capacity = header.index_capacity as u64;
         if index_capacity == 0 {
             return None;
@@ -718,9 +800,20 @@ impl Pool {
             stored_offset as usize,
         ) {
             Ok(crate::core::cursor::ReadResult::Message { frame, .. }) if frame.seq == seq => {
-                Some((stored_offset as usize, frame.into_owned()))
+                Some((stored_offset as usize, frame))
             }
             _ => None,
+        }
+    }
+
+    pub(crate) fn seek_index_locked(
+        &self,
+        cursor: &mut crate::core::cursor::Cursor,
+        header: PoolHeader,
+        seq: u64,
+    ) {
+        if let Some((offset, _)) = self.get_via_index(header, seq) {
+            cursor.seek_to(offset);
         }
     }
 
@@ -737,9 +830,18 @@ impl Pool {
     fn lookup(
         &self,
         seq: u64,
-        mut cache: Option<&mut SeqOffsetCache>,
+        cache: Option<&mut SeqOffsetCache>,
     ) -> Result<crate::core::cursor::FrameRef, Error> {
         let _lock = self.read_lock()?;
+        self.lookup_locked(seq, cache)
+            .map(|frame| frame.into_owned())
+    }
+
+    fn lookup_locked(
+        &self,
+        seq: u64,
+        mut cache: Option<&mut SeqOffsetCache>,
+    ) -> Result<crate::core::cursor::FrameView<'_>, Error> {
         let header = self.header_locked()?;
         let bounds = bounds_from_header(header);
         let (oldest, newest) = match (bounds.oldest_seq, bounds.newest_seq) {
@@ -768,7 +870,7 @@ impl Pool {
             if let Ok(crate::core::cursor::ReadResult::Message { frame, .. }) = cached
                 && frame.seq == seq
             {
-                return Ok(frame.into_owned());
+                return Ok(frame);
             }
             cache.remove(seq);
         }
@@ -780,17 +882,27 @@ impl Pool {
             return Ok(frame);
         }
 
-        self.get_by_scan(seq, header, cache)
+        self.scan_history_locked(header, cache, |frame| frame.seq >= seq)?
+            .map(|(_, frame)| frame)
+            .filter(|frame| frame.seq == seq)
+            .ok_or_else(|| {
+                Error::new(ErrorKind::NotFound)
+                    .with_message("message not found")
+                    .with_seq(seq)
+            })
     }
 
     // The caller holds the shared lock. Skipped payloads remain private borrowed
     // views; only the selected message is copied across the public boundary.
-    fn get_by_scan(
+    pub(crate) fn scan_history_locked(
         &self,
-        seq: u64,
         header: PoolHeader,
         mut cache: Option<&mut SeqOffsetCache>,
-    ) -> Result<crate::core::cursor::FrameRef, Error> {
+        matches: impl Fn(&crate::core::cursor::FrameView<'_>) -> bool,
+    ) -> Result<Option<(usize, crate::core::cursor::FrameView<'_>)>, Error> {
+        if header.oldest_seq == 0 {
+            return Ok(None);
+        }
         let ring_offset = header.ring_offset as usize;
         let ring_size = header.ring_size as usize;
         let mut offset = header.tail_off as usize;
@@ -807,13 +919,11 @@ impl Pool {
                     if let Some(cache) = cache.as_deref_mut() {
                         cache.insert(frame.seq, offset);
                     }
-                    if frame.seq == seq {
-                        return Ok(frame.into_owned());
+                    if matches(&frame) {
+                        return Ok(Some((offset, frame)));
                     }
-                    if frame.seq > seq {
-                        return Err(Error::new(ErrorKind::NotFound)
-                            .with_message("message not found")
-                            .with_seq(seq));
+                    if frame.seq == header.newest_seq {
+                        return Ok(None);
                     }
                     offset = next_off;
                     last_seq = frame.seq;
@@ -829,6 +939,23 @@ impl Pool {
                 }
             }
         }
+    }
+
+    /// Copy a stable frame directly into caller storage. An undersized buffer
+    /// receives only the required length; it never receives a partial payload.
+    #[cfg(test)]
+    pub(crate) fn get_into(
+        &self,
+        seq: u64,
+        destination: &mut [u8],
+    ) -> Result<(usize, u64, u32), Error> {
+        let _lock = self.read_lock()?;
+        let frame = self.lookup_locked(seq, None)?;
+        let len = frame.payload.len();
+        if destination.len() >= len {
+            destination[..len].copy_from_slice(frame.payload);
+        }
+        Ok((len, frame.time, frame.flags))
     }
 
     /// Hold an exclusive pool lock until the returned guard is dropped.
@@ -852,26 +979,6 @@ impl Pool {
         Ok(lock)
     }
 
-    // Ordinary append has exclusive Rust access to Pool, so its original file
-    // description cannot have a concurrent same-handle read. Public guards use
-    // independent descriptions and therefore still exclude this lock.
-    fn append_operation_lock(&self) -> Result<AppendLock, Error> {
-        let file = self.file.try_clone().map_err(|err| {
-            Error::new(ErrorKind::Io)
-                .with_path(&self.path)
-                .with_source(err)
-        })?;
-        let lock = lock_for_append(file, &self.path)?;
-        // A duplicated descriptor still refers to the held file object. Its
-        // identity cannot change while Pool owns it; the mutable path is checked
-        // freshly after every lock acquisition.
-        #[cfg(unix)]
-        require_path_identity(self.file_identity, &self.path)?;
-        #[cfg(windows)]
-        require_current_path(&lock.file, &self.path)?;
-        Ok(lock)
-    }
-
     pub fn append(&mut self, payload: &[u8]) -> Result<u64, Error> {
         self.append_with_options(payload, AppendOptions::default())
     }
@@ -889,98 +996,60 @@ impl Pool {
         payload: &[u8],
         options: AppendOptions,
     ) -> Result<u64, Error> {
-        let lock = self.append_operation_lock()?;
+        // Exclusive Rust access excludes same-handle snapshots. Borrowing the
+        // held file preserves its lock identity without duplicating a descriptor.
+        let lock = lock_for_append_borrowed(&self.file, &self.path)?;
+        #[cfg(unix)]
+        require_path_identity(self.file_identity, &self.path)?;
+        #[cfg(windows)]
+        require_current_path(&self.file, &self.path)?;
         // Refresh header after acquiring the lock to avoid stale state across processes.
         self.header = self.header_locked()?;
-        let seq = self.append_locked(payload, options)?;
-        drop(lock);
-        // Notification is optional wake-up work after committed storage publication.
-        let _ = notify::post_for_path(&self.path);
-        Ok(seq)
-    }
-
-    fn append_locked(&mut self, payload: &[u8], options: AppendOptions) -> Result<u64, Error> {
-        self.append_locked_with_flush(payload, options, flush_mmap_range)
-    }
-
-    fn append_locked_with_flush<F>(
-        &mut self,
-        payload: &[u8],
-        options: AppendOptions,
-        mut flush_range: F,
-    ) -> Result<u64, Error>
-    where
-        F: FnMut(&MmapMut, usize, usize, &Path, &'static str) -> Result<(), Error>,
-    {
-        let ring_offset = self.header.ring_offset as usize;
-        let ring_size = self.header.ring_size as usize;
-        let plan = plan::plan_append(self.header, &self.mmap, payload.len())?;
-
-        apply_append(
+        #[cfg(windows)]
+        let previous = self.header.newest_seq;
+        let seq = append_locked_with_flush(
             &mut self.mmap,
-            ring_offset,
-            &plan,
+            &mut self.header,
+            &self.path,
             payload,
-            options.timestamp_ns,
+            options,
+            flush_mmap_range,
         )?;
-
-        self.header = plan.next_header;
-
-        if options.durability == Durability::Flush {
-            let frame_offset = ring_offset + plan.frame_offset;
-            flush_range(
-                &self.mmap,
-                frame_offset,
-                plan.frame_len,
-                &self.path,
-                "failed to flush frame",
-            )?;
-            if let Some(wrap_head) = plan.wrap_offset {
-                let wrap_start = ring_offset + wrap_head;
-                flush_range(
-                    &self.mmap,
-                    wrap_start,
-                    FRAME_HEADER_LEN,
-                    &self.path,
-                    "failed to flush wrap marker",
-                )?;
+        #[cfg(target_os = "linux")]
+        {
+            let word = wake_word(&self.mmap);
+            let armed = notify::publish(word, seq);
+            drop(lock);
+            crash_before_wake_for_tests!();
+            if armed {
+                notify::linux::wake(word);
             }
-            if plan.next_header.index_capacity > 0 {
-                let (index_start, index_len) = index_slot_range(
-                    plan.next_header.index_offset,
-                    plan.next_header.index_capacity,
-                    plan.seq,
-                )
-                .ok_or_else(|| {
-                    Error::new(ErrorKind::Corrupt).with_message("index slot calculation overflow")
-                })?;
-                flush_range(
-                    &self.mmap,
-                    index_start,
-                    index_len,
-                    &self.path,
-                    "failed to flush index slot",
-                )?;
-            }
-            flush_range(
-                &self.mmap,
-                0,
-                HEADER_SIZE,
-                &self.path,
-                "failed to flush header",
-            )?;
         }
-
-        validate::debug_assert_tail_committed(
-            &self.mmap,
-            ring_offset,
-            ring_size,
-            self.header.tail_off as usize,
-            self.header.tail_next_off as usize,
-            self.header.oldest_seq,
-        );
-
-        Ok(plan.seq)
+        #[cfg(windows)]
+        {
+            let armed = notify::publish(wake_word(&self.mmap), seq);
+            drop(lock);
+            crash_before_wake_for_tests!();
+            if armed && let Some(identity) = &self.notify_identity {
+                notify::windows::wake(identity, previous);
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if notify::shared_address_available() {
+            let armed = notify::publish(wake_word(&self.mmap), seq);
+            drop(lock);
+            crash_before_wake_for_tests!();
+            if armed {
+                notify::wake_sequence(progress_word(&self.mmap));
+            }
+            return Ok(seq);
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            drop(lock);
+            let _ = notify::post_for_name(&self.notify_name, &mut self.notify_writer);
+        }
+        Ok(seq)
     }
 
     fn metrics_from_header(&self, header: PoolHeader, bounds: Bounds) -> PoolMetrics {
@@ -1034,12 +1103,176 @@ impl Pool {
     }
 
     fn frame_timestamp_ns_for_seq(&self, seq: u64) -> Option<u64> {
-        self.get(seq).ok().map(|frame| frame.timestamp_ns)
+        self.get(seq).ok().map(|frame| frame.time)
     }
+}
+
+fn append_locked_with_flush<F>(
+    mmap: &mut MmapMut,
+    header: &mut PoolHeader,
+    path: &Path,
+    payload: &[u8],
+    options: AppendOptions,
+    mut flush_range: F,
+) -> Result<u64, Error>
+where
+    F: FnMut(&MmapMut, usize, usize, &Path, &'static str) -> Result<(), Error>,
+{
+    let ring_offset = header.ring_offset as usize;
+    let ring_size = header.ring_size as usize;
+    let plan = plan::plan_append(*header, mmap, payload.len())?;
+
+    apply_append(mmap, ring_offset, &plan, payload, options.timestamp_ns)?;
+
+    *header = plan.next_header;
+
+    if options.durability == Durability::Flush {
+        let frame_offset = ring_offset + plan.frame_offset;
+        flush_range(
+            mmap,
+            frame_offset,
+            plan.frame_len,
+            path,
+            "failed to flush frame",
+        )?;
+        if let Some(wrap_head) = plan.wrap_offset {
+            let wrap_start = ring_offset + wrap_head;
+            flush_range(
+                mmap,
+                wrap_start,
+                FRAME_HEADER_LEN,
+                path,
+                "failed to flush wrap marker",
+            )?;
+        }
+        if plan.next_header.index_capacity > 0 {
+            let (index_start, index_len) = index_slot_range(
+                plan.next_header.index_offset,
+                plan.next_header.index_capacity,
+                plan.seq,
+            )
+            .ok_or_else(|| {
+                Error::new(ErrorKind::Corrupt).with_message("index slot calculation overflow")
+            })?;
+            flush_range(
+                mmap,
+                index_start,
+                index_len,
+                path,
+                "failed to flush index slot",
+            )?;
+        }
+        flush_range(mmap, 0, HEADER_SIZE, path, "failed to flush header")?;
+    }
+
+    validate::debug_assert_tail_committed(
+        mmap,
+        ring_offset,
+        ring_size,
+        header.tail_off as usize,
+        header.tail_next_off as usize,
+        header.oldest_seq,
+    );
+
+    Ok(plan.seq)
+}
+
+pub(crate) struct ProgressWatch {
+    mmap: MmapMut,
+    #[cfg(windows)]
+    identity: String,
+}
+
+impl ProgressWatch {
+    pub(crate) fn generation(&self) -> u64 {
+        u64::from_le(progress_word(&self.mmap).load(Ordering::Acquire))
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn wait(
+        &self,
+        expected: u64,
+        timeout: std::time::Duration,
+        cancel: Option<&notify::CancelSignal>,
+    ) -> Result<notify::WaitOutcome, notify::NotifyError> {
+        notify::linux::wait(
+            wake_word(&self.mmap),
+            progress_word(&self.mmap),
+            expected,
+            timeout,
+            cancel,
+        )
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn wait(
+        &self,
+        expected: u64,
+        timeout: std::time::Duration,
+        cancel: Option<&notify::CancelSignal>,
+    ) -> Result<notify::WaitOutcome, notify::NotifyError> {
+        notify::windows::wait(
+            &self.identity,
+            wake_word(&self.mmap),
+            progress_word(&self.mmap),
+            expected,
+            timeout,
+            cancel,
+        )
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn wait(
+        &self,
+        expected: u64,
+        timeout: std::time::Duration,
+    ) -> Result<notify::WaitOutcome, notify::NotifyError> {
+        notify::wait_for_sequence(
+            wake_word(&self.mmap),
+            progress_word(&self.mmap),
+            expected,
+            timeout,
+        )
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    pub(crate) fn wait(
+        &self,
+        _expected: u64,
+        _timeout: std::time::Duration,
+    ) -> Result<notify::WaitOutcome, notify::NotifyError> {
+        Err(notify::NotifyError::Unavailable)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+fn wake_word(mmap: &MmapMut) -> &std::sync::atomic::AtomicU32 {
+    // SAFETY: A validated header starts at a page boundary. This aligned,
+    // reserved word has no other live accesses in this version.
+    unsafe {
+        std::sync::atomic::AtomicU32::from_ptr(mmap.as_ptr().add(NOTIFY_OFFSET).cast_mut().cast())
+    }
+}
+
+fn progress_word(mmap: &MmapMut) -> &AtomicU64 {
+    // SAFETY: Mappings start at a page boundary and the validated header contains
+    // this eight-byte aligned word. All live stores use this atomic access;
+    // ordinary header reads hold the pool lock and cannot overlap those stores.
+    unsafe { AtomicU64::from_ptr(mmap.as_ptr().add(NEWEST_SEQ_OFFSET).cast_mut().cast()) }
 }
 
 pub struct AppendLock {
     file: File,
+}
+
+struct AppendOperationLock<'a> {
+    file: &'a File,
+}
+
+impl Drop for AppendOperationLock<'_> {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
 }
 
 pub(crate) struct ReadLock<'a> {
@@ -1125,9 +1358,21 @@ fn require_identity_matches(same: bool, path: &Path) -> Result<(), Error> {
         return Err(Error::new(ErrorKind::NotFound)
             .with_message("pool path now refers to a different file")
             .with_path(path)
-            .with_hint("Open the pool again before writing."));
+            .with_hint("Open the pool again."));
     }
     Ok(())
+}
+
+fn lock_for_append_borrowed<'a>(
+    file: &'a File,
+    path: &Path,
+) -> Result<AppendOperationLock<'a>, Error> {
+    file.lock().map_err(|err| {
+        Error::new(lock_error_kind(&err))
+            .with_path(path)
+            .with_source(err)
+    })?;
+    Ok(AppendOperationLock { file })
 }
 
 fn lock_for_append(file: File, path: &Path) -> Result<AppendLock, Error> {
@@ -1147,24 +1392,50 @@ fn same_file_identity(first: &File, second: &File) -> io::Result<bool> {
     Ok(first.dev() == second.dev() && first.ino() == second.ino())
 }
 
+fn file_incarnation(file: &File) -> io::Result<String> {
+    let info = file.metadata()?;
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt;
+        format!("{:x}:{:x}", info.dev(), info.ino())
+    };
+    #[cfg(windows)]
+    let identity = {
+        let (volume, high, low) = windows_file_identity(file)?;
+        format!("{volume:x}:{high:x}:{low:x}")
+    };
+    // A cutoff releases the original file. Include its creation time when the
+    // filesystem supplies one so reusing the native file ID changes the token.
+    let Ok(created) = info.created() else {
+        return Ok(identity);
+    };
+    let stamp = match created.duration_since(std::time::UNIX_EPOCH) {
+        Ok(since) => since.as_nanos() as i128,
+        Err(before) => -(before.duration().as_nanos() as i128),
+    };
+    Ok(format!("{identity}:{stamp}"))
+}
+
 #[cfg(windows)]
-fn same_file_identity(first: &File, second: &File) -> io::Result<bool> {
+fn windows_file_identity(file: &File) -> io::Result<(u32, u32, u32)> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
     };
-    fn identity(file: &File) -> io::Result<(u32, u32, u32)> {
-        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok((
-            info.dwVolumeSerialNumber,
-            info.nFileIndexHigh,
-            info.nFileIndexLow,
-        ))
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
     }
-    Ok(identity(first)? == identity(second)?)
+    Ok((
+        info.dwVolumeSerialNumber,
+        info.nFileIndexHigh,
+        info.nFileIndexLow,
+    ))
+}
+
+#[cfg(windows)]
+fn same_file_identity(first: &File, second: &File) -> io::Result<bool> {
+    Ok(windows_file_identity(first)? == windows_file_identity(second)?)
 }
 
 fn lock_error_kind(err: &io::Error) -> ErrorKind {
@@ -1228,7 +1499,7 @@ fn write_pool_header(mmap: &mut MmapMut, header: &PoolHeader) {
     write_u64(mmap, 72, header.tail_off);
     write_u64(mmap, 80, header.tail_next_off);
     write_u64(mmap, 88, header.oldest_seq);
-    write_u64(mmap, 96, header.newest_seq);
+    progress_word(mmap).store(header.newest_seq.to_le(), Ordering::Release);
 }
 
 fn flush_mmap_range(
@@ -1419,7 +1690,7 @@ fn index_slot_range(index_offset: u64, index_capacity: u32, seq: u64) -> Option<
 mod tests {
     use super::{
         AppendOptions, Durability, HEADER_SIZE, Pool, PoolHeader, PoolOptions, SeqOffsetCache,
-        apply_append,
+        append_locked_with_flush, apply_append,
     };
     use crate::core::error::{Error, ErrorKind};
     use crate::core::frame::{self, FRAME_HEADER_LEN, FrameHeader, FrameState};
@@ -1784,6 +2055,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn lock_errors_map_to_expected_kinds() {
         let err = std::io::Error::from_raw_os_error(libc::EAGAIN);
         assert_eq!(super::lock_error_kind(&err), ErrorKind::Busy);
@@ -2274,30 +2546,104 @@ mod tests {
     }
 
     #[test]
+    fn progress_mapping_survives_pool_drop_and_observes_prior_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("progress.plasmite");
+        let pool = Pool::create(&path, PoolOptions::new(65536)).unwrap();
+        let watch = pool.progress_watch().unwrap();
+        assert_eq!(watch.generation(), 0);
+        let mut notify = crate::api::notify::open_for_pool(&pool);
+        drop(pool);
+        let mut writer = Pool::open(&path).unwrap();
+        writer.append(b"published before wait").unwrap();
+        assert_eq!(watch.generation(), 1);
+        if crate::core::notify::shared_address_available()
+            && let Some(notify) = &mut notify
+        {
+            use crate::api::notify::NotifyWait;
+            assert_eq!(notify.wait(Duration::from_secs(1)), NotifyWait::Signaled);
+            assert_eq!(notify.wait(Duration::from_millis(1)), NotifyWait::TimedOut);
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    #[test]
+    fn commit_without_notification_is_recovered() {
+        use crate::api::{Read, ReadPoll};
+        use std::sync::atomic::Ordering;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quiet-crash.plasmite");
+        let pool = Pool::create(&path, PoolOptions::new(65536)).unwrap();
+        if !crate::core::notify::shared_address_available() {
+            return;
+        }
+        let mut reader = pool.follow_lite3(Read::new()).unwrap();
+        thread::scope(|scope| {
+            let crash = scope.spawn(|| {
+                let word = super::wake_word(&pool.mmap);
+                let deadline = Instant::now() + Duration::from_secs(2);
+                while word.load(Ordering::Acquire) == 0 && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                assert_ne!(word.load(Ordering::Acquire), 0, "reader did not arm");
+                // Give the armed reader time to enter the wait before the child commits.
+                thread::sleep(Duration::from_millis(20));
+                Command::new(std::env::current_exe().unwrap())
+                    .args(["core::pool::tests::crash_before_wake_child", "--exact"])
+                    .env("PLASMITE_TEST_CRASH_BEFORE_WAKE", &path)
+                    .status()
+                    .unwrap()
+            });
+            match reader.poll(Duration::from_secs(3)).unwrap() {
+                ReadPoll::Message(frame) => assert_eq!(frame.seq, 1),
+                _ => panic!("reader failed to discover a committed message"),
+            }
+            assert_eq!(crash.join().unwrap().code(), Some(91));
+        });
+        assert!(matches!(
+            reader.poll(Duration::ZERO).unwrap(),
+            ReadPoll::Waiting
+        ));
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    #[test]
+    fn crash_before_wake_child() {
+        let Some(path) = std::env::var_os("PLASMITE_TEST_CRASH_BEFORE_WAKE") else {
+            return;
+        };
+        let mut pool = Pool::open(std::path::Path::new(&path)).unwrap();
+        pool.feed(&serde_json::json!({"n": 1}), crate::api::Feed::new())
+            .unwrap();
+        panic!("the writer must exit before signalling readers");
+    }
+
+    #[test]
     fn notify_reader_child() {
-        use crate::api::{PoolApiExt, TailOptions};
+        use crate::api::{Read, Since};
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
         let Some(path) = std::env::var_os("PLASMITE_NOTIFY_READER_PATH") else {
             return;
         };
         let path = std::path::PathBuf::from(path);
+        let reader_id = std::env::var("PLASMITE_NOTIFY_READER_ID").unwrap_or_default();
+        let marker = |kind: &str| path.with_extension(format!("{reader_id}{kind}"));
         let reader = Pool::open(&path).expect("independent reader");
         let cancelled = Arc::new(AtomicBool::new(false));
-        let mut options = TailOptions::new();
-        options.poll_interval = Duration::from_millis(5);
-        options.timeout = Some(Duration::from_secs(3));
-        options.cancel = Some(Arc::clone(&cancelled));
-        let mut tail = reader.tail(options);
+        let mut tail = reader
+            .follow(Read::since(Since::Oldest).cancel(Arc::clone(&cancelled)))
+            .expect("open reader");
         // The separate process registers its waiter before any append.
-        fs::write(path.with_extension("ready"), b"ready").expect("ready");
+        fs::write(marker("ready"), b"ready").expect("ready");
         for expected in 1..=128 {
             let message = tail.next_message().expect("tail").expect("message");
             assert_eq!(message.seq, expected);
             assert_eq!(message.data["n"].as_u64(), Some(expected));
         }
-        fs::write(path.with_extension("received"), b"received").expect("received");
-        let cancel_path = path.with_extension("cancel");
+        fs::write(marker("received"), b"received").expect("received");
+        let cancel_path = marker("cancel");
         let cancel_flag = Arc::clone(&cancelled);
         let watcher = thread::spawn(move || {
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -2313,6 +2659,45 @@ mod tests {
         assert!(tail.next_message().expect("cancelled wait").is_none());
         watcher.join().expect("cancel watcher");
         assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn independent_process_readers_keep_positions_and_cancel() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fanout.plasmite");
+        let mut writer = Pool::create(&path, PoolOptions::new(1048576)).unwrap();
+        let mut children = (0..3)
+            .map(|id| {
+                Command::new(std::env::current_exe().unwrap())
+                    .args(["core::pool::tests::notify_reader_child", "--exact"])
+                    .env("PLASMITE_NOTIFY_READER_PATH", &path)
+                    .env("PLASMITE_NOTIFY_READER_ID", format!("{id}."))
+                    .spawn()
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let wait_for = |kind: &str| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                if (0..3).all(|id| path.with_extension(format!("{id}.{kind}")).exists()) {
+                    return true;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            false
+        };
+        assert!(wait_for("ready"));
+        for seq in 1..=128 {
+            let payload = lite3::encode_message(&[], &serde_json::json!({"n": seq})).unwrap();
+            assert_eq!(writer.append(payload.as_slice()).unwrap(), seq);
+        }
+        assert!(wait_for("received"));
+        for id in 0..3 {
+            fs::write(path.with_extension(format!("{id}.cancel")), b"cancel").unwrap();
+        }
+        for child in &mut children {
+            assert!(child.wait().unwrap().success());
+        }
     }
 
     #[test]
@@ -2899,7 +3284,7 @@ mod tests {
                     let payload_seq =
                         u64::from_le_bytes(frame.payload.as_slice().try_into().expect("payload"));
                     assert_eq!(frame.seq, payload_seq);
-                    assert_eq!(frame.timestamp_ns, payload_seq);
+                    assert_eq!(frame.time, payload_seq);
                 }
                 CursorResult::WouldBlock => thread::yield_now(),
                 CursorResult::FellBehind => {}
@@ -3082,18 +3467,20 @@ mod tests {
         let path = dir.path().join("pool.plasmite");
         let mut pool = Pool::create(&path, PoolOptions::new(1024 * 1024)).expect("create");
 
-        let err = pool
-            .append_locked_with_flush(
-                b"not-acknowledged",
-                AppendOptions::new(1, Durability::Flush),
-                |_mmap, _offset, _len, path, _message| {
-                    Err(Error::new(ErrorKind::Io)
-                        .with_message("injected flush failure")
-                        .with_source(std::io::Error::from(std::io::ErrorKind::Interrupted))
-                        .with_path(path))
-                },
-            )
-            .expect_err("flush failure must be returned");
+        let err = append_locked_with_flush(
+            &mut pool.mmap,
+            &mut pool.header,
+            &pool.path,
+            b"not-acknowledged",
+            AppendOptions::new(1, Durability::Flush),
+            |_mmap, _offset, _len, path, _message| {
+                Err(Error::new(ErrorKind::Io)
+                    .with_message("injected flush failure")
+                    .with_source(std::io::Error::from(std::io::ErrorKind::Interrupted))
+                    .with_path(path))
+            },
+        )
+        .expect_err("flush failure must be returned");
         assert_eq!(err.kind(), ErrorKind::Io);
         assert!(err.to_string().contains("injected flush failure"));
         // The failed flush does not roll back publication. Retrying the append
@@ -3107,6 +3494,22 @@ mod tests {
         let reopened = Pool::open(&path).expect("pool remains reopenable");
         let header = reopened.header_from_mmap().expect("header");
         crate::core::validate::validate_pool_state(header, &reopened.mmap).expect("valid state");
+    }
+
+    #[test]
+    fn pool_incarnation_tracks_file_replacement() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("identity.plasmite");
+        let mut original = Pool::create(&path, PoolOptions::new(64 * 1024)).expect("create");
+        let identity = original.incarnation().expect("identity");
+        original.append(b"one").expect("append");
+        assert_eq!(original.incarnation().unwrap(), identity);
+        assert_eq!(Pool::open(&path).unwrap().incarnation().unwrap(), identity);
+        let guard = original.into_path_guard();
+        std::fs::remove_file(&path).expect("remove");
+        let replacement = Pool::create(&path, PoolOptions::new(64 * 1024)).expect("replace");
+        assert_ne!(replacement.incarnation().unwrap(), identity);
+        assert!(guard.check_current_path().is_err());
     }
 
     #[test]

@@ -1,71 +1,27 @@
-# Plasmite docs
+# Plasmite documentation
 
-Start with the task you want to do:
+New to Plasmite? Start with the [README](../README.md): it explains the model in a few minutes.
 
-| I want to… | Read |
+## Use Plasmite
+
+| Goal | Read |
 | --- | --- |
-| Send and read messages on one machine | [Cookbook](cookbook.md) |
-| Send and follow through UDP | [UDP messages](record/serving.md#send-udp-messages) |
-| Share a pool with another machine | [Share your first pool](record/serving.md#share-your-first-pool) |
-| Share through a Tailscale network | [Tailscale setup](record/serving.md#use-tailscale) |
-| Use shared pools in a browser | [Browser setup](record/serving.md#open-pools-in-a-browser) |
-| Give Claude Code or Codex CLI access to pools | [AI client setup](record/serving.md#connect-an-ai-client) |
-| Revoke access or remove a saved connection | [Manage access](record/serving.md#manage-access) |
-| Run a server with my own certificate or proxy | [Deploy a server](record/serving.md#deploy-a-server) |
-| Fix a connection | [Troubleshooting](record/serving.md#troubleshoot-a-connection) |
-| Prepare for the next major release | [Next major upgrade](record/upgrading-next-major.md) |
-| Upgrade from an earlier release | [Upgrade to 1.0](record/upgrading-1.0.md) |
-| Install Plasmite | [Install channels](record/distribution.md#install-matrix) |
-| Install on Raspberry Pi or Linux ARM | [Published ARM SDK installation (preview)](record/distribution.md#linux-arm-sdk-preview-install) |
-| Build from this checkout | [Source installation](building.md#install-the-cli-from-source) |
+| Install the CLI or a library | [Distribution](record/distribution.md) |
+| Copy a recipe for a common task | [Cookbook](cookbook.md) |
+| Let AI agents coordinate through pools | [Plasmite for agents](agents.md) |
+| Predict what a command does: pool references, reads, formats, exit codes | [CLI guide](cli.md) |
+| Share pools, connect a browser or AI client, or fix access | [Serving](record/serving.md) |
+| Choose an interface or check performance | [Performance](performance/README.md) |
+| Move a 1.x application or script to 2.0 | [Upgrading to 2.0](record/upgrading-2.0.md) |
 
-## Guides and reference
+Each library has its own guide: [Rust](../README-crate.md), [Python](../bindings/python/README.md), [JavaScript](../bindings/node/README.md), [Go](../bindings/go/README.md) and [C](../include/plasmite.h).
 
-- [CLI guide](cli.md): pool references, input, output, and exit behavior.
-- [Serving guide](record/serving.md): secure sharing, browser trust, server
-  operation, and recovery.
-- [Distribution](record/distribution.md): supported platforms, install
-  channels, and software development kit (SDK) layout.
-- [UDP versus HTTP measurements](performance/udp-transport.md): compare measured
-  delivery, latency, and datagram-size support.
-- [Transport measurements](performance/transport-comparison.md): compare
-  native and Model Context Protocol (MCP) performance.
-- [Windows access measurements](performance/windows-access-1.0.md): compare
-  local libraries, command-line tools, HTTP, and MCP in Plasmite 1.0.0.
-- [1.0 performance measurements](performance/1.0-release.md): measured writer
-  improvements, small-read costs and consumer latency on one Mac.
+## Develop Plasmite
 
-For exact contracts, start with the [specifications](../spec/README.md):
+- [Vision](record/vision.md): what Plasmite is for and the principles that settle design questions.
+- [Architecture](record/architecture.md): a map of the code and the lasting design choices.
+- [Building](building.md), [testing](record/testing.md) and [releasing](record/releasing.md): how to build, check and ship it.
+- [Specifications](../spec/README.md): exact behavior. The [2.0 contract](../spec/v2/SPEC.md) covers the CLI, libraries, HTTP, UDP and MCP.
+- [Validation reports](validation/README.md): dated checks on physical hardware, virtual machines and hosted CI, with the limits of each.
 
-- [CLI](../spec/v0/SPEC.md)
-- [UDP input](../spec/udp/v0/SPEC.md)
-- [UDP transport](../spec/udp/v1/SPEC.md)
-- [Public API](../spec/api/v0/SPEC.md)
-- [Remote HTTP protocol](../spec/remote/v0/SPEC.md)
-- [MCP](../spec/mcp/2025-11-25/SPEC.md)
-- [C interface and ownership rules](../include/plasmite.h)
-
-## Work on Plasmite
-
-The [docs of record](record/README.md) describe the current design and
-policies. Start with [vision](record/vision.md) for product scope and
-[architecture](record/architecture.md) for internal structure. Use
-[building](building.md), [testing](record/testing.md), and
-[releasing](record/releasing.md) when changing or shipping code.
-
-Proposals record design history. Current setup and behavior live in the guides
-and specifications above:
-
-- [Secure sharing design history](proposals/serve-mcp-native.md)
-- [Earlier invitation design](proposals/serve-access-mvp.md)
-- [MCP server design](proposals/mcp-server.md)
-- [CLI and help audit](proposals/cli-help-system.md)
-- [Proposed CLI surface design history](proposals/cli-surface.md)
-- [UDP input design](proposals/udp-input.md): read when designing a small
-  datagram input for an existing pool.
-- [Full UDP transport proposal](proposals/udp-transport.md): read when designing
-  UDP feed and follow through the CLI and native APIs.
-
-The repository's `.ergo/` backlog and journal track planned work and results.
-
-CLI script migration: [Upgrading to 1.2.0](record/upgrading-1.2.md).
+The Ergo backlog in `.ergo/` tracks unfinished work. Git history keeps superseded proposals and investigations.

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -18,9 +19,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sandover/plasmite/bindings/go/api"
-	"github.com/sandover/plasmite/bindings/go/local"
+	"github.com/sandover/plasmite/bindings/go/v2/api"
+	"github.com/sandover/plasmite/bindings/go/v2/local"
 )
+
+func fetchStored(pool *local.Pool, seq uint64) (*api.Message, error) {
+	reader, err := pool.Fetch(api.Since(seq))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return reader.Next(context.Background())
+}
 
 const testPoolSizeBytes uint64 = 1024 * 1024
 
@@ -69,11 +79,11 @@ func TestSDKSendsJSONAndOriginalLite3ThroughServer(t *testing.T) {
 		t.Fatalf("create test pool: %v", err)
 	}
 	t.Cleanup(localPool.Close)
-	original, err := localPool.Append(map[string]any{"origin": "lite3", "value": 7}, []string{"source"})
+	original, err := localPool.Feed(map[string]any{"origin": "lite3", "value": 7}, []string{"source"})
 	if err != nil {
 		t.Fatalf("append original message: %v", err)
 	}
-	originalLite3, err := localPool.GetLite3(original.Seq)
+	originalLite3, err := fetchLocalFrame(localPool, original.Seq)
 	if err != nil {
 		t.Fatalf("read original Lite3: %v", err)
 	}
@@ -142,18 +152,26 @@ func TestSDKSendsJSONAndOriginalLite3ThroughServer(t *testing.T) {
 		t.Fatalf("open UDP pool: %v", err)
 	}
 	t.Cleanup(udpPool.Close)
-	options := NewFollowOptions()
-	options.Start = Sequence(original.Seq + 1)
-	follow, err := udpPool.Follow(options)
+	since := Since(original.Seq + 1)
+	follow, err := udpPool.Follow(since)
 	if err != nil {
 		t.Fatalf("open UDP follow: %v", err)
 	}
 	t.Cleanup(follow.Close)
+	rawFollow, err := udpPool.FollowLite3(since)
+	if err != nil {
+		t.Fatalf("open raw UDP follow: %v", err)
+	}
+	t.Cleanup(rawFollow.Close)
 
-	if err := udpPool.SendJSON(map[string]any{"origin": "json", "value": 8}, []string{"sensor"}); err != nil {
+	if err := udpPool.Feed(map[string]any{"origin": "json", "value": 8}, []string{"sensor"}); err != nil {
 		t.Fatalf("send JSON: %v", err)
 	}
 	jsonFrame := nextFrame(t, follow)
+	rawJSON := nextFrame(t, rawFollow)
+	if rawJSON.Message != nil || rawJSON.Seq != jsonFrame.Seq || rawJSON.Time != jsonFrame.Time || !bytes.Equal(rawJSON.Payload, jsonFrame.Payload) {
+		t.Fatalf("raw follow must retain exact frame bytes/identity without a decoded message")
+	}
 	var jsonData map[string]any
 	if err := json.Unmarshal(jsonFrame.Message.Data, &jsonData); err != nil {
 		t.Fatalf("decode followed JSON: %v", err)
@@ -164,14 +182,14 @@ func TestSDKSendsJSONAndOriginalLite3ThroughServer(t *testing.T) {
 	if got := jsonFrame.Message.Tags(); len(got) != 1 || got[0] != "sensor" {
 		t.Fatalf("unexpected JSON tags: %#v", got)
 	}
-	jsonTime, err := localPool.GetLite3(jsonFrame.Seq)
+	jsonTime, err := fetchLocalFrame(localPool, jsonFrame.Seq)
 	if err != nil {
 		t.Fatalf("read JSON timestamp: %v", err)
 	}
-	if jsonFrame.TimestampNs != jsonTime.TimestampNs || jsonFrame.TimestampNs <= 1<<53 {
-		t.Fatalf("timestamp lost uint64 precision: followed=%d stored=%d", jsonFrame.TimestampNs, jsonTime.TimestampNs)
+	if jsonFrame.Time != jsonTime.Time || jsonFrame.Time <= 1<<53 {
+		t.Fatalf("timestamp lost uint64 precision: followed=%d stored=%d", jsonFrame.Time, jsonTime.Time)
 	}
-	storedJSON, err := localPool.Get(jsonFrame.Seq)
+	storedJSON, err := fetchStored(localPool, jsonFrame.Seq)
 	if err != nil {
 		t.Fatalf("read stored JSON message: %v", err)
 	}
@@ -179,17 +197,25 @@ func TestSDKSendsJSONAndOriginalLite3ThroughServer(t *testing.T) {
 		t.Fatalf("followed JSON differs from stored message")
 	}
 
-	if err := udpPool.SendLite3(originalLite3.Payload); err != nil {
+	if err := udpPool.FeedLite3(originalLite3.Payload); err != nil {
 		t.Fatalf("send Lite3: %v", err)
 	}
 	lite3Frame := nextFrame(t, follow)
+	rawLite3 := nextFrame(t, rawFollow)
+	if rawLite3.Message != nil || rawLite3.Seq != lite3Frame.Seq || !bytes.Equal(rawLite3.Payload, originalLite3.Payload) {
+		t.Fatalf("raw Lite3 frame differs from the original")
+	}
+	rawFollow.Close()
+	if !bytes.Equal(rawJSON.Payload, jsonFrame.Payload) {
+		t.Fatal("owned raw bytes changed after follow close")
+	}
 	if !bytes.Equal(lite3Frame.Payload, originalLite3.Payload) {
 		t.Fatalf("followed Lite3 bytes differ from submitted bytes")
 	}
 	if !bytes.Equal(lite3Frame.Message.Data, original.Data) {
 		t.Fatalf("followed Lite3 message differs from source message")
 	}
-	storedLite3, err := localPool.Get(lite3Frame.Seq)
+	storedLite3, err := fetchStored(localPool, lite3Frame.Seq)
 	if err != nil {
 		t.Fatalf("read stored Lite3 message: %v", err)
 	}
@@ -200,23 +226,13 @@ func TestSDKSendsJSONAndOriginalLite3ThroughServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	largeStart := (uint64(1) << 53) + 1
-	largeFollow, err := udpPool.Follow(FollowOptions{Start: Sequence(largeStart), Live: false})
-	if err != nil {
-		t.Fatalf("open follow above JavaScript's safe integer range: %v", err)
-	}
-	defer largeFollow.Close()
-	progressEvent, err := largeFollow.Next(ctx)
-	if err != nil {
-		t.Fatalf("read large-sequence progress: %v", err)
-	}
-	progress, ok := progressEvent.(*api.UDPProgress)
-	if !ok || progress.StartSeq != largeStart {
-		t.Fatalf("large sequence changed in binding: got %#v, want %d", progressEvent, largeStart)
+	_, err = udpPool.Fetch(Since(largeStart))
+	var usage *Error
+	if !errors.As(err, &usage) || usage.Kind != api.ErrorUsage {
+		t.Fatalf("future sequence must report Usage, got %v", err)
 	}
 
-	// A canceled wait must return promptly, while a live context still follows
-	// progress and messages through the same native handle.
-	cancelFollow, err := udpPool.Follow(NewFollowOptions())
+	cancelFollow, err := udpPool.Follow()
 	if err != nil {
 		t.Fatalf("open cancellation follow: %v", err)
 	}
@@ -237,6 +253,21 @@ func TestSDKSendsJSONAndOriginalLite3ThroughServer(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("follow did not start reading")
 	}
+	overlap := make(chan error, 1)
+	queued, cancelQueued := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelQueued()
+	go func() {
+		_, err := cancelFollow.Next(queued)
+		overlap <- err
+	}()
+	select {
+	case err := <-overlap:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("overlapping read: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("overlapping read blocked")
+	}
 	cancelWait()
 	select {
 	case err := <-done:
@@ -248,7 +279,7 @@ func TestSDKSendsJSONAndOriginalLite3ThroughServer(t *testing.T) {
 	}
 
 	t.Run("concurrent close cancels a read and leaves the handle closed", func(t *testing.T) {
-		follow, err := udpPool.Follow(NewFollowOptions())
+		follow, err := udpPool.Follow()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +326,7 @@ func TestSDKSendsJSONAndOriginalLite3ThroughServer(t *testing.T) {
 			}
 		}
 		follow.Cancel()
-		if _, err := follow.Next(context.Background()); !errors.Is(err, api.ErrClosed) {
+		if _, err := follow.Next(context.Background()); !isUsage(err) {
 			t.Fatalf("read after close returned %v, want ErrClosed", err)
 		}
 	})
@@ -340,6 +371,11 @@ func repositoryRoot(t *testing.T) string {
 }
 
 func TestNativeFramesRetainArrivalOrderAndDuplicates(t *testing.T) {
+	for _, mode := range []string{"json", "raw", "views"} {
+		t.Run(mode, func(t *testing.T) { checkNativeFramesRetainArrivalOrder(t, mode) })
+	}
+}
+func checkNativeFramesRetainArrivalOrder(t *testing.T, mode string) {
 	localClient, err := local.NewClient(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -350,13 +386,20 @@ func TestNativeFramesRetainArrivalOrderAndDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer localPool.Close()
-	original, err := localPool.Append(map[string]any{"value": 17}, []string{"tag"})
+	original, err := localPool.Feed(map[string]any{"value": 17}, []string{"tag"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, err := localPool.GetLite3(original.Seq)
+	stored, err := fetchLocalFrame(localPool, original.Seq)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if mode == "views" {
+		native, e := localPool.FeedView(map[string]any{"value": 17, "exact": int64(math.MaxInt64), "negative": math.Copysign(0, -1), "blob": []byte{0, 255}}, nil)
+		if e != nil {
+			t.Fatal(e)
+		}
+		stored.Payload = native.Lite3()
 	}
 	peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
@@ -424,15 +467,25 @@ func TestNativeFramesRetainArrivalOrderAndDuplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	follow, err := pool.Follow(FollowOptions{Start: Last(4), Live: false})
+	last := Last(4)
+	var follow *Follow
+	switch mode {
+	case "raw":
+		follow, err = pool.FetchLite3(last)
+	case "views":
+		follow, err = pool.FetchView(last)
+	default:
+		follow, err = pool.Fetch(last)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer follow.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	var retained []*local.MessageView
 	var sequences []uint64
-	var skips []*Gap
+	var skips []*Skip
 	var progress []*Progress
 	for {
 		event, err := follow.Next(ctx)
@@ -445,13 +498,23 @@ func TestNativeFramesRetainArrivalOrderAndDuplicates(t *testing.T) {
 		switch event := event.(type) {
 		case *Frame:
 			sequences = append(sequences, event.Seq)
-			if event.TimestampNs != timestamp || !bytes.Equal(event.Payload, stored.Payload) {
+			if event.Time != timestamp || !bytes.Equal(event.Payload, stored.Payload) {
 				t.Fatal("frame bytes or timestamp changed")
 			}
-			if event.Message.Seq != event.Seq {
+			if mode == "raw" {
+				if event.Message != nil {
+					t.Fatal("raw follow materialized JSON")
+				}
+			} else if event.Message.Seq != event.Seq {
 				t.Fatal("decoded sequence changed")
 			}
-		case *Gap:
+		case *ViewFrame:
+			sequences = append(sequences, event.Seq)
+			if event.View.Seq() != event.Seq || event.Time != timestamp || event.View.Time() != timestamp || !bytes.Equal(event.View.Lite3(), stored.Payload) {
+				t.Fatal("view identity/bytes changed")
+			}
+			retained = append(retained, event.View)
+		case *Skip:
 			skips = append(skips, event)
 		case *Progress:
 			progress = append(progress, event)
@@ -469,4 +532,108 @@ func TestNativeFramesRetainArrivalOrderAndDuplicates(t *testing.T) {
 	if err := <-finished; err != nil {
 		t.Fatal(err)
 	}
+	follow.Close()
+	pool.Close()
+	client.Close()
+	localPool.Close()
+	for _, view := range retained {
+		var out struct {
+			Value    int
+			Exact    int64
+			Negative float64
+			Blob     []byte
+		}
+		if err := view.Decode(&out); err != nil || out.Value != 17 || out.Exact != math.MaxInt64 || !math.Signbit(out.Negative) || !bytes.Equal(out.Blob, []byte{0, 255}) {
+			t.Fatalf("retained DATA changed: %+v %v", out, err)
+		}
+	}
+}
+
+func TestViewFollowCancelsAndClosesWhileIdle(t *testing.T) {
+	peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	ready := make(chan error, 1)
+	go func() {
+		buffer := make([]byte, 4096)
+		n, address, e := peer.ReadFromUDP(buffer)
+		if e != nil {
+			ready <- e
+			return
+		}
+		if n < 24 {
+			ready <- fmt.Errorf("short request")
+			return
+		}
+		packet := append([]byte{0, 'P', 'U', 'D', 'P', 1, 4, 0}, buffer[8:24]...)
+		_, e = peer.WriteToUDP(append(packet, []byte(`{"start_seq":1,"next_seq":1,"lease_ms":30000,"terminal":false}`)...), address)
+		ready <- e
+	}()
+	client, err := NewClient("udp://" + peer.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	pool, err := client.OpenPool("idle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	follow, err := pool.FollowView()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer follow.Close()
+	if err = <-ready; err != nil {
+		t.Fatal(err)
+	}
+	if _, err = follow.Next(context.Background()); err != nil {
+		t.Fatal(err)
+	} // opening progress
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if _, err = follow.Next(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wrong timeout: %v", err)
+	}
+	entered := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, e := follow.Next(observedContext{Context: context.Background(), entered: entered})
+		done <- e
+	}()
+	<-entered
+	follow.Close()
+	select {
+	case err = <-done:
+		if !errors.Is(err, context.Canceled) && !isUsage(err) {
+			t.Fatalf("wrong close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("close blocked")
+	}
+}
+
+func fetchLocalFrame(pool *local.Pool, seq uint64) (*local.Lite3Frame, error) {
+	reader, err := pool.FetchLite3(local.Since(seq))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return reader.Next(context.Background())
+}
+
+func fetchLocalView(pool *local.Pool, seq uint64) (*local.MessageView, error) {
+	reader, err := pool.FetchView(local.Since(seq))
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	return reader.Next(context.Background())
+}
+
+func isUsage(err error) bool {
+	var typed *api.Error
+	return errors.As(err, &typed) && typed.Kind == api.ErrorUsage
 }

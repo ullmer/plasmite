@@ -261,6 +261,7 @@ fn access_connect_prints_direct_http_oauth_setup_for_humans_and_json() {
     assert!(human_text.contains(&endpoint));
     assert!(human_text.contains("enter the access key in its browser approval page"));
     assert!(human_text.contains("does not sign in the MCP client"));
+    assert!(!human_text.contains("--oauth-client-registration dcr"));
     assert!(!human_text.contains("mcp --remote"));
 
     let machine = success(access_connect(
@@ -272,6 +273,12 @@ fn access_connect_prints_direct_http_oauth_setup_for_humans_and_json() {
     let value: Value = serde_json::from_slice(&machine.stdout).unwrap();
     let commands = value["mcp_setup_commands"].as_array().unwrap();
     assert_eq!(commands.len(), 2);
+    assert!(commands.iter().all(|command| {
+        !command
+            .as_str()
+            .unwrap()
+            .contains("--oauth-client-registration dcr")
+    }));
     assert!(
         commands[0]
             .as_str()
@@ -310,8 +317,8 @@ fn removed_errors_skip_option_is_rejected() {
             .unwrap(),
     );
     let output = command(temp.path())
-        .args(["feed", pool.to_str().unwrap(), "--file"])
-        .arg(&data)
+        .args(["feed", pool.to_str().unwrap()])
+        .stdin(std::fs::File::open(&data).unwrap())
         .args(["--errors", "skip"])
         .output()
         .unwrap();

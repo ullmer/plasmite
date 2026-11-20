@@ -579,3 +579,603 @@
 {"version":1,"task_id":"KPRMEV","kind":"claim","at":"2026-11-12T17:01:46.81278Z","agent":"codex@lite3-hardening"}
 {"version":1,"task_id":"KPRMEV","kind":"result","at":"2026-11-12T17:16:05.005952Z","agent":"codex@lite3-hardening","text":"Fixed both Lite3 defects; Linux ASan/UBSan O0/O2, vendoring reproduction, audit and release gate pass."}
 {"version":1,"task_id":"KPRMEV","kind":"done","at":"2026-11-12T17:16:05.033846Z","agent":"codex@lite3-hardening"}
+{"version":1,"task_id":"NBMK3B","kind":"created","at":"2026-11-12T17:41:30.260303Z"}
+{"version":1,"task_id":"MBDZI5","kind":"created","at":"2026-11-12T17:41:30.260333Z"}
+{"version":1,"task_id":"BPS6MK","kind":"created","at":"2026-11-12T17:41:30.260337Z"}
+{"version":1,"task_id":"JZKH4W","kind":"created","at":"2026-11-12T17:41:30.260341Z"}
+{"version":1,"task_id":"S6XTUF","kind":"created","at":"2026-11-12T17:41:30.260344Z"}
+{"version":1,"task_id":"SROZBH","kind":"created","at":"2026-11-12T17:41:30.260347Z"}
+{"version":1,"task_id":"OMHEHX","kind":"created","at":"2026-11-12T17:41:30.260349Z"}
+{"version":1,"task_id":"T2AZ53","kind":"created","at":"2026-11-12T17:41:30.260352Z"}
+{"version":1,"task_id":"2PLTOG","kind":"created","at":"2026-11-12T17:41:30.260354Z"}
+{"version":1,"task_id":"ASKWKT","kind":"created","at":"2026-11-12T17:41:30.260356Z"}
+{"version":1,"task_id":"PUVAGD","kind":"created","at":"2026-11-12T17:41:30.260358Z"}
+{"version":1,"task_id":"VYYSHY","kind":"created","at":"2026-11-12T17:41:30.26036Z"}
+{"version":1,"task_id":"YZYJR7","kind":"created","at":"2026-11-12T17:41:30.260362Z"}
+{"version":1,"task_id":"ZKWYVP","kind":"created","at":"2026-11-12T17:41:30.260365Z"}
+{"version":1,"task_id":"YHLM3S","kind":"created","at":"2026-11-12T17:41:30.260367Z"}
+{"version":1,"task_id":"MWBAKO","kind":"created","at":"2026-11-12T17:41:30.260369Z"}
+{"version":1,"task_id":"2YO2OC","kind":"created","at":"2026-11-12T17:41:30.260371Z"}
+{"version":1,"task_id":"3PQTKC","kind":"created","at":"2026-11-12T17:41:30.260374Z"}
+{"version":1,"task_id":"VRXDIB","kind":"created","at":"2026-11-12T17:41:30.260376Z"}
+{"version":1,"task_id":"TFKLMG","kind":"created","at":"2026-11-12T17:41:30.260379Z"}
+{"version":1,"task_id":"3U7BC5","kind":"created","at":"2026-11-12T17:41:30.260381Z"}
+{"version":1,"task_id":"RCVDXF","kind":"created","at":"2026-11-12T17:41:30.260383Z"}
+{"version":1,"task_id":"PIOEWO","kind":"created","at":"2026-11-12T17:41:30.260385Z"}
+{"version":1,"task_id":"CKISOK","kind":"created","at":"2026-11-12T17:41:30.260387Z"}
+{"version":1,"task_id":"BOG2ST","kind":"created","at":"2026-11-12T17:41:30.260389Z"}
+{"version":1,"task_id":"LRF7UU","kind":"created","at":"2026-11-12T17:41:30.260391Z"}
+{"version":1,"task_id":"2PLTOG","kind":"claim","at":"2026-11-12T17:42:55.39293Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"2YO2OC","kind":"claim","at":"2026-11-12T17:42:55.449046Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"3PQTKC","kind":"claim","at":"2026-11-12T17:42:55.497978Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"3U7BC5","kind":"claim","at":"2026-11-12T17:42:55.546969Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"ASKWKT","kind":"claim","at":"2026-11-12T17:42:55.595678Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"BOG2ST","kind":"claim","at":"2026-11-12T17:42:55.644275Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"BPS6MK","kind":"claim","at":"2026-11-12T17:42:55.696361Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"CKISOK","kind":"claim","at":"2026-11-12T17:42:55.746999Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"JZKH4W","kind":"claim","at":"2026-11-12T17:42:55.796334Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"LRF7UU","kind":"claim","at":"2026-11-12T17:42:55.847886Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"MBDZI5","kind":"claim","at":"2026-11-12T17:42:55.900353Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"MWBAKO","kind":"claim","at":"2026-11-12T17:42:55.951963Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"OMHEHX","kind":"claim","at":"2026-11-12T17:42:56.00296Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"PIOEWO","kind":"claim","at":"2026-11-12T17:42:56.056229Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"PUVAGD","kind":"claim","at":"2026-11-12T17:42:56.108414Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"RCVDXF","kind":"claim","at":"2026-11-12T17:42:56.163074Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"S6XTUF","kind":"claim","at":"2026-11-12T17:42:56.215146Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"SROZBH","kind":"claim","at":"2026-11-12T17:42:56.267522Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"T2AZ53","kind":"claim","at":"2026-11-12T17:42:56.320422Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"TFKLMG","kind":"claim","at":"2026-11-12T17:42:56.372631Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"VRXDIB","kind":"claim","at":"2026-11-12T17:42:56.423123Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"VYYSHY","kind":"claim","at":"2026-11-12T17:42:56.473566Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"YHLM3S","kind":"claim","at":"2026-11-12T17:42:56.521986Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"YZYJR7","kind":"claim","at":"2026-11-12T17:42:56.572812Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"ZKWYVP","kind":"claim","at":"2026-11-12T17:42:56.622417Z","agent":"codex@compensation-spikes"}
+{"version":1,"task_id":"BPS6MK","kind":"result","at":"2026-11-12T18:05:51.260451Z","agent":"codex@compensation-spikes","text":"Recorded isolated peer request trace; see preserved probe log.","file":{"path":".scratch/compensation-spikes-runtime-probe.log","sha256":"25d3df4fe0f54f81517f30475905f5b8c8f0bc6d6aecbb9b3fb9cb8b29e66d56","mtime":"2026-11-12T17:52:19.825835801Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"6YYPR5","kind":"created","at":"2026-11-12T18:09:20.991475Z"}
+{"version":1,"task_id":"XFIBEH","kind":"created","at":"2026-11-12T18:09:20.991489Z"}
+{"version":1,"task_id":"DZHNLH","kind":"created","at":"2026-11-12T18:09:20.991493Z"}
+{"version":1,"task_id":"WCCZJI","kind":"created","at":"2026-11-12T18:09:20.991495Z"}
+{"version":1,"task_id":"OEPCGK","kind":"created","at":"2026-11-12T18:09:20.991498Z"}
+{"version":1,"task_id":"JZYHYF","kind":"created","at":"2026-11-12T18:09:20.991501Z"}
+{"version":1,"task_id":"SQOFH4","kind":"created","at":"2026-11-12T18:09:20.991503Z"}
+{"version":1,"task_id":"WZGRR5","kind":"created","at":"2026-11-12T18:09:20.991505Z"}
+{"version":1,"task_id":"SIEKHQ","kind":"created","at":"2026-11-12T18:09:20.991507Z"}
+{"version":1,"task_id":"EYO5BU","kind":"created","at":"2026-11-12T18:09:20.991509Z"}
+{"version":1,"task_id":"LYM22Z","kind":"created","at":"2026-11-12T18:09:20.991512Z"}
+{"version":1,"task_id":"BPS6MK","kind":"result","at":"2026-11-12T18:11:18.896078Z","agent":"codex@compensation-spikes","text":"SIMPLIFY: Return Lite3 point metadata with its payload; draft XFIBEH","file":{"path":".scratch/compensation-spikes-runtime-probe.log","sha256":"25d3df4fe0f54f81517f30475905f5b8c8f0bc6d6aecbb9b3fb9cb8b29e66d56","mtime":"2026-11-12T17:52:19.825835801Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"BPS6MK","kind":"done","at":"2026-11-12T18:11:18.95595Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"JZKH4W","kind":"result","at":"2026-11-12T18:11:19.02564Z","agent":"codex@compensation-spikes","text":"SIMPLIFY: Traverse one bounded retained window for MCP; draft DZHNLH","file":{"path":".scratch/compensation-spikes-storage-probe.log","sha256":"b64901837173ba959d37d5af1281db5f1616e2b4a31b52dd1d5bbfd157e2a300","mtime":"2026-11-12T17:46:50.27502229Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"JZKH4W","kind":"done","at":"2026-11-12T18:11:19.07333Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"S6XTUF","kind":"result","at":"2026-11-12T18:11:19.141713Z","agent":"codex@compensation-spikes","text":"SIMPLIFY: Present the validation snapshot; draft WCCZJI","file":{"path":".scratch/compensation-spikes-storage-probe.log","sha256":"b64901837173ba959d37d5af1281db5f1616e2b4a31b52dd1d5bbfd157e2a300","mtime":"2026-11-12T17:46:50.27502229Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"S6XTUF","kind":"done","at":"2026-11-12T18:11:19.1817Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"SROZBH","kind":"result","at":"2026-11-12T18:11:19.250439Z","agent":"codex@compensation-spikes","text":"KEEP: Keep interface-specific listing policies; keep current design","file":{"path":".scratch/compensation-spikes-catalog-probe.log","sha256":"5b25c70e9b89aaa036c5d610624349397c25c6adb6dcabc90773900d0def5e0e","mtime":"2026-11-12T17:58:09.213661961Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"SROZBH","kind":"done","at":"2026-11-12T18:11:19.28773Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"PUVAGD","kind":"result","at":"2026-11-12T18:11:19.353208Z","agent":"codex@compensation-spikes","text":"SIMPLIFY: Share platform-aware string reference inference; draft SQOFH4","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"PUVAGD","kind":"done","at":"2026-11-12T18:11:19.388621Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"3PQTKC","kind":"result","at":"2026-11-12T18:11:19.452536Z","agent":"codex@compensation-spikes","text":"SIMPLIFY: Keep geometric retry and always try the cap; draft EYO5BU","file":{"path":".scratch/compensation-spikes-encoding-limit.log","sha256":"bc788de23e985026d4ea34a3748b5962581163ada482ca3a220624a62eb54c11","mtime":"2026-11-12T17:51:18.183637425Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"3PQTKC","kind":"done","at":"2026-11-12T18:11:19.492184Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"2YO2OC","kind":"result","at":"2026-11-12T18:11:19.557106Z","agent":"codex@compensation-spikes","text":"KEEP: Keep bounded JSON object discovery; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"2YO2OC","kind":"done","at":"2026-11-12T18:11:19.593402Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"MBDZI5","kind":"result","at":"2026-11-12T18:11:19.655959Z","agent":"codex@compensation-spikes","text":"KEEP: Keep exact-number jaq adapter; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"MBDZI5","kind":"done","at":"2026-11-12T18:11:19.693496Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"VYYSHY","kind":"result","at":"2026-11-12T18:11:19.755985Z","agent":"codex@compensation-spikes","text":"REPLACE: Define default-location policy across runtimes; draft WZGRR5","file":{"path":".scratch/compensation-spikes-path-build-probe.log","sha256":"c193f851cb82b35f1b3c99ca02aade1372a40ee215a0775d5d10b79328edde91","mtime":"2026-11-12T17:55:14.055089959Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"VYYSHY","kind":"done","at":"2026-11-12T18:11:19.79622Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"OMHEHX","kind":"result","at":"2026-11-12T18:11:19.863099Z","agent":"codex@compensation-spikes","text":"REPLACE: Keep subscriber-scoped polling; replace PoolInfo equality as proof of file identity and separate ; draft OEPCGK","file":{"path":".scratch/compensation-spikes-storage-probe.log","sha256":"b64901837173ba959d37d5af1281db5f1616e2b4a31b52dd1d5bbfd157e2a300","mtime":"2026-11-12T17:46:50.27502229Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"OMHEHX","kind":"done","at":"2026-11-12T18:11:19.902162Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"T2AZ53","kind":"result","at":"2026-11-12T18:11:19.969068Z","agent":"codex@compensation-spikes","text":"REPLACE: Replace name-only UI resume with private instance-aware recovery; keep exact cursor and retention; draft OEPCGK","file":{"path":".scratch/compensation-spikes-ui-probe.log","sha256":"fa432920070c841cb067716001389eb35a78673c0034162ce05a07b958735696","mtime":"2026-11-12T17:50:23.627004581Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"T2AZ53","kind":"done","at":"2026-11-12T18:11:20.006125Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"2PLTOG","kind":"result","at":"2026-11-12T18:11:20.072208Z","agent":"codex@compensation-spikes","text":"KEEP: Keep bounded history over the existing SSE endpoint; no new paging protocol has earned its co; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"2PLTOG","kind":"done","at":"2026-11-12T18:11:20.108618Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"ASKWKT","kind":"result","at":"2026-11-12T18:11:20.175578Z","agent":"codex@compensation-spikes","text":"REPLACE: Replace lossy Node error-context conversion; retain the C layout and avoid a speculative rich-err; draft JZYHYF","file":{"path":".scratch/compensation-spikes-error-probe.log","sha256":"9051469f06bc91f333de831979db1af1a1864b21a367923f54af46e9e0f68dbb","mtime":"2026-11-12T17:53:06.950879011Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"ASKWKT","kind":"done","at":"2026-11-12T18:11:20.212501Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"VRXDIB","kind":"result","at":"2026-11-12T18:11:20.278481Z","agent":"codex@compensation-spikes","text":"KEEP: Keep separate runtime transports; repair the proven exact-error loss through ASKWKT rather th; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"VRXDIB","kind":"done","at":"2026-11-12T18:11:20.318941Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"BOG2ST","kind":"result","at":"2026-11-12T18:11:20.382631Z","agent":"codex@compensation-spikes","text":"KEEP: Keep the existing VM policy checks and their explicit no-browser scope; no replacement harnes; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"BOG2ST","kind":"done","at":"2026-11-12T18:11:20.418276Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"MWBAKO","kind":"result","at":"2026-11-12T18:11:20.475389Z","agent":"codex@compensation-spikes","text":"KEEP: Keep the two-reader bounded supervisor; each major part follows from the capture contract.; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"MWBAKO","kind":"done","at":"2026-11-12T18:11:20.507793Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"PIOEWO","kind":"result","at":"2026-11-12T18:11:20.564097Z","agent":"codex@compensation-spikes","text":"SIMPLIFY: Replace the fixed startup sleep with existing readiness; keep conservative detached-process owne; draft SIEKHQ","file":{"path":".scratch/compensation-spikes-dev-probe.log","sha256":"e1b8b9161bedeadbd153195c43981cef0cb0f655091f1d0c90e1f5c89582434e","mtime":"2026-11-12T17:52:37.030887984Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"PIOEWO","kind":"done","at":"2026-11-12T18:11:20.598191Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"YZYJR7","kind":"result","at":"2026-11-12T18:11:20.655099Z","agent":"codex@compensation-spikes","text":"KEEP: Keep fresh path-based Windows authority checks until native evidence establishes a safe conte; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"YZYJR7","kind":"done","at":"2026-11-12T18:11:20.686196Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"ZKWYVP","kind":"result","at":"2026-11-12T18:11:20.743262Z","agent":"codex@compensation-spikes","text":"KEEP: Keep the small fact readers and distinct trust checks; do not adopt a full parser or unify tr; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"ZKWYVP","kind":"done","at":"2026-11-12T18:11:20.777Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"YHLM3S","kind":"result","at":"2026-11-12T18:11:20.8438Z","agent":"codex@compensation-spikes","text":"KEEP: Keep separate OAuth and browser stores with AccessStore as shared authority.; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"YHLM3S","kind":"done","at":"2026-11-12T18:11:20.890502Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"TFKLMG","kind":"result","at":"2026-11-12T18:11:20.951653Z","agent":"codex@compensation-spikes","text":"KEEP: Keep truthful whole-checkout identity; native build separation needs an end-to-end cost compa; keep current design","file":{"path":".scratch/compensation-spikes-path-build-probe.log","sha256":"c193f851cb82b35f1b3c99ca02aade1372a40ee215a0775d5d10b79328edde91","mtime":"2026-11-12T17:55:14.055089959Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"TFKLMG","kind":"done","at":"2026-11-12T18:11:20.985812Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"3U7BC5","kind":"result","at":"2026-11-12T18:11:21.045994Z","agent":"codex@compensation-spikes","text":"KEEP: Keep explicit shell status propagation and the existing retry budget.; keep current design","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"3U7BC5","kind":"done","at":"2026-11-12T18:11:21.078503Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"RCVDXF","kind":"result","at":"2026-11-12T18:11:21.134735Z","agent":"codex@compensation-spikes","text":"SIMPLIFY: Extract release build selection and provenance validation into a behavioral offline-testable res; draft LYM22Z","file":{"path":".scratch/compensation-spikes-independent-reviews.json","sha256":"261f1d6d4a7b1c96101bba81c34839180358e1f44060fc3af32cf1ea20098b03","mtime":"2026-11-12T18:09:20.965677304Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"RCVDXF","kind":"done","at":"2026-11-12T18:11:21.167068Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"CKISOK","kind":"result","at":"2026-11-12T18:11:21.224294Z","agent":"codex@compensation-spikes","text":"KEEP: Keep bounded fixture port selection/retry; no production listener API change.; keep current design","file":{"path":".scratch/compensation-spikes-oauth-bind-probe.log","sha256":"88d1e09342182e75a310e83aa89a6e4ba4b5985a5a0c39d8dd73645defee21e6","mtime":"2026-11-12T18:10:09.364592156Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"CKISOK","kind":"done","at":"2026-11-12T18:11:21.255713Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"LRF7UU","kind":"result","at":"2026-11-12T18:11:21.316182Z","agent":"codex@compensation-spikes","text":"KEEP: Keep exact live-instance probing; no cleanup or coordinator without real accumulation evidenc; keep current design","file":{"path":".scratch/compensation-spikes-runtime-probe.log","sha256":"25d3df4fe0f54f81517f30475905f5b8c8f0bc6d6aecbb9b3fb9cb8b29e66d56","mtime":"2026-11-12T17:52:19.825835801Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"LRF7UU","kind":"done","at":"2026-11-12T18:11:21.352712Z","agent":"codex@compensation-spikes","text":"Investigation complete; decision, evidence and follow-up recorded."}
+{"version":1,"task_id":"JZYHYF","kind":"result","at":"2026-11-12T18:21:03.663259Z","text":"Approved bigint error seq/offset for 2.0; native and HTTP adapters must change together."}
+{"version":1,"task_id":"XFIBEH","kind":"open","at":"2026-11-12T18:28:01.256215Z"}
+{"version":1,"task_id":"XFIBEH","kind":"claim","at":"2026-11-12T18:28:08.870917Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"XFIBEH","kind":"open","at":"2026-11-12T18:28:15.458387Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"XFIBEH","kind":"claim","at":"2026-11-12T18:28:15.493139Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"DZHNLH","kind":"open","at":"2026-11-12T18:28:15.525683Z"}
+{"version":1,"task_id":"DZHNLH","kind":"claim","at":"2026-11-12T18:28:15.56373Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"WCCZJI","kind":"open","at":"2026-11-12T18:28:15.595525Z"}
+{"version":1,"task_id":"WCCZJI","kind":"claim","at":"2026-11-12T18:28:15.627439Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"OEPCGK","kind":"open","at":"2026-11-12T18:28:15.659252Z"}
+{"version":1,"task_id":"OEPCGK","kind":"claim","at":"2026-11-12T18:28:15.691253Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"JZYHYF","kind":"open","at":"2026-11-12T18:28:15.723949Z"}
+{"version":1,"task_id":"JZYHYF","kind":"claim","at":"2026-11-12T18:28:15.758734Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"SQOFH4","kind":"open","at":"2026-11-12T18:28:15.791859Z"}
+{"version":1,"task_id":"SQOFH4","kind":"claim","at":"2026-11-12T18:28:15.822373Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"WZGRR5","kind":"open","at":"2026-11-12T18:28:15.852651Z"}
+{"version":1,"task_id":"WZGRR5","kind":"claim","at":"2026-11-12T18:28:15.882203Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"SIEKHQ","kind":"open","at":"2026-11-12T18:28:15.914467Z"}
+{"version":1,"task_id":"SIEKHQ","kind":"claim","at":"2026-11-12T18:28:15.945921Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"EYO5BU","kind":"open","at":"2026-11-12T18:28:15.978378Z"}
+{"version":1,"task_id":"EYO5BU","kind":"claim","at":"2026-11-12T18:28:16.009969Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"LYM22Z","kind":"open","at":"2026-11-12T18:28:16.041295Z"}
+{"version":1,"task_id":"LYM22Z","kind":"claim","at":"2026-11-12T18:28:16.074583Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"SIEKHQ","kind":"result","at":"2026-11-12T18:34:57.08697Z","agent":"codex@plasmite","text":"Ready-file startup implemented; immediate/delayed/failing/never-ready and ownership fixtures pass."}
+{"version":1,"task_id":"LYM22Z","kind":"result","at":"2026-11-12T18:34:57.11953Z","agent":"codex@plasmite","text":"Extracted release selection; offline selection/provenance, workflow and delivery fixtures pass."}
+{"version":1,"task_id":"XFIBEH","kind":"result","at":"2026-11-12T18:47:01.404084Z","agent":"codex@plasmite","text":"One-response Lite3 identity fetch and legacy fallback pass fake-peer, CLI and remote tests."}
+{"version":1,"task_id":"XFIBEH","kind":"done","at":"2026-11-12T18:47:01.436034Z","agent":"codex@plasmite","text":"Implemented; just check and just integration passed."}
+{"version":1,"task_id":"DZHNLH","kind":"result","at":"2026-11-12T18:47:01.472449Z","agent":"codex@plasmite","text":"Cursor-based MCP scans pass checkpoint/filter tests; no-index probe matches point-read results."}
+{"version":1,"task_id":"DZHNLH","kind":"done","at":"2026-11-12T18:47:01.501207Z","agent":"codex@plasmite","text":"Implemented; just check and just integration passed."}
+{"version":1,"task_id":"WCCZJI","kind":"result","at":"2026-11-12T18:47:01.5335Z","agent":"codex@plasmite","text":"Doctor uses captured validation facts; append/replacement/removal fixtures and unchanged JSON pass."}
+{"version":1,"task_id":"WCCZJI","kind":"done","at":"2026-11-12T18:47:01.56308Z","agent":"codex@plasmite","text":"Implemented; just check and just integration passed."}
+{"version":1,"task_id":"OEPCGK","kind":"result","at":"2026-11-12T18:47:01.595814Z","agent":"codex@plasmite","text":"Identity-aware UI reset/cache and stale-catalog recovery pass 27 browser tests and native Windows checks."}
+{"version":1,"task_id":"OEPCGK","kind":"done","at":"2026-11-12T18:47:01.627275Z","agent":"codex@plasmite","text":"Implemented; just check and just integration passed."}
+{"version":1,"task_id":"JZYHYF","kind":"result","at":"2026-11-12T18:47:01.661835Z","agent":"codex@plasmite","text":"Exact bigint native/HTTP error context passes Node tests, types and package checks; 2.0 guide updated."}
+{"version":1,"task_id":"JZYHYF","kind":"done","at":"2026-11-12T18:47:01.693316Z","agent":"codex@plasmite","text":"Implemented; just check and just integration passed."}
+{"version":1,"task_id":"SIEKHQ","kind":"result","at":"2026-11-12T18:47:01.730536Z","agent":"codex@plasmite","text":"Ready-file startup and owned-process cleanup pass immediate/delayed/failure/timeout fixtures."}
+{"version":1,"task_id":"SIEKHQ","kind":"done","at":"2026-11-12T18:47:01.762372Z","agent":"codex@plasmite","text":"Implemented; just check and just integration passed."}
+{"version":1,"task_id":"EYO5BU","kind":"result","at":"2026-11-12T18:47:01.794323Z","agent":"codex@plasmite","text":"Encoder tries exact cap; fitting, expanded, oversized and malformed boundary fixtures pass."}
+{"version":1,"task_id":"EYO5BU","kind":"done","at":"2026-11-12T18:47:01.822929Z","agent":"codex@plasmite","text":"Implemented; just check and just integration passed."}
+{"version":1,"task_id":"LYM22Z","kind":"result","at":"2026-11-12T18:47:01.857086Z","agent":"codex@plasmite","text":"Offline release-selection/provenance matrix, workflow wiring and delivery fixtures pass."}
+{"version":1,"task_id":"LYM22Z","kind":"done","at":"2026-11-12T18:47:01.886313Z","agent":"codex@plasmite","text":"Implemented; just check and just integration passed."}
+{"version":1,"task_id":"SQOFH4","kind":"result","at":"2026-11-12T18:49:30.95427Z","agent":"codex@plasmite","text":"Native Windows ABI paths, Go path constructors and CLI build pass; public string ABI remains unchanged."}
+{"version":1,"task_id":"SQOFH4","kind":"done","at":"2026-11-12T18:49:30.986144Z","agent":"codex@plasmite","text":"Implemented and verified on macOS and native Windows; integrated gates passed."}
+{"version":1,"task_id":"WZGRR5","kind":"result","at":"2026-11-12T18:49:31.020684Z","agent":"codex@plasmite","text":"Home defaults aligned; native Windows/Rust/Node/Python/Go fixtures pass; explicit recovery documented.","file":{"path":"docs/record/upgrading-next-major.md","sha256":"5a7073f1396642a78eabdc22ab84ab6d82e263f8b1b6ebd147a5ea4ee24e86aa","mtime":"2026-11-12T18:47:30.469834163Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"WZGRR5","kind":"done","at":"2026-11-12T18:49:31.05945Z","agent":"codex@plasmite","text":"Implemented and verified on macOS and native Windows; integrated gates passed."}
+{"version":1,"task_id":"ABMVNH","kind":"created","at":"2026-11-12T20:13:40.386769Z"}
+{"version":1,"task_id":"72EGJU","kind":"created","at":"2026-11-12T20:13:40.386783Z"}
+{"version":1,"task_id":"COP2D4","kind":"created","at":"2026-11-12T20:13:40.38679Z"}
+{"version":1,"task_id":"5F4SXU","kind":"created","at":"2026-11-12T20:13:40.386794Z"}
+{"version":1,"task_id":"346LXD","kind":"created","at":"2026-11-12T20:13:40.386798Z"}
+{"version":1,"task_id":"6SXWY6","kind":"created","at":"2026-11-12T20:13:40.386801Z"}
+{"version":1,"task_id":"72EGJU","kind":"claim","at":"2026-11-12T20:14:45.31049Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"COP2D4","kind":"claim","at":"2026-11-12T20:14:45.35047Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"5F4SXU","kind":"claim","at":"2026-11-12T20:14:45.387261Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"346LXD","kind":"claim","at":"2026-11-12T20:14:45.421896Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"6SXWY6","kind":"claim","at":"2026-11-12T20:14:45.459897Z","agent":"codex@plasmite"}
+{"version":1,"task_id":"PQ6AEE","kind":"created","at":"2026-11-12T20:40:36.739511Z"}
+{"version":1,"task_id":"SPQ3MC","kind":"created","at":"2026-11-12T20:45:23.883063Z"}
+{"version":1,"task_id":"72EGJU","kind":"result","at":"2026-11-12T20:51:49.113932Z","agent":"codex@plasmite","text":"KEEP: typed settings add47lines and serialization cost; exact job spelling changes. Evidence attached.","file":{"path":"docs/proposals/implementation-distillation/service-settings.md","sha256":"7fb11fb3deea0a60be78d70a31687216f9d0244c726e6fc60b3b73c555c0804f","mtime":"2026-11-12T20:49:14.964657658Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"72EGJU","kind":"done","at":"2026-11-12T20:51:49.148446Z","agent":"codex@plasmite","text":"Prototype comparisons and measurements complete; report and reproducible evidence preserved."}
+{"version":1,"task_id":"COP2D4","kind":"result","at":"2026-11-12T20:51:49.204733Z","agent":"codex@plasmite","text":"SIMPLIFY tag-only binary filtering; keep models. 98-99% fewer Rust allocs; draft SPQ3MC; flat-string cost.","file":{"path":"docs/proposals/implementation-distillation/message-path.md","sha256":"3840ac1e61fce488c319e91056d3403239b42eaea556515f8aa5affb9b799bf9","mtime":"2026-11-12T20:49:14.965093077Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"COP2D4","kind":"done","at":"2026-11-12T20:51:49.236571Z","agent":"codex@plasmite","text":"Prototype comparisons and measurements complete; report and reproducible evidence preserved."}
+{"version":1,"task_id":"5F4SXU","kind":"result","at":"2026-11-12T20:51:49.295764Z","agent":"codex@plasmite","text":"KEEP: browser progress model adds16lines/four fields with no measured gain; evidence attached.","file":{"path":"docs/proposals/implementation-distillation/browser-state.md","sha256":"4c8882b2385315ac2a33696d4f72f160ba8e850a8e07ef875213e2031617ac40","mtime":"2026-11-12T20:49:14.965502621Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"5F4SXU","kind":"done","at":"2026-11-12T20:51:49.329148Z","agent":"codex@plasmite","text":"Prototype comparisons and measurements complete; report and reproducible evidence preserved."}
+{"version":1,"task_id":"346LXD","kind":"result","at":"2026-11-12T20:51:49.388258Z","agent":"codex@plasmite","text":"KEEP: shared follow model adds57lines; allocations unchanged and no consistent speed gain.","file":{"path":"docs/proposals/implementation-distillation/ordered-follow.md","sha256":"5d33859512fabb1752adcf3c95e9ba7e1b857e204a011a015a47286df9590a8e","mtime":"2026-11-12T20:49:14.965759955Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"346LXD","kind":"done","at":"2026-11-12T20:51:49.422345Z","agent":"codex@plasmite","text":"Prototype comparisons and measurements complete; report and reproducible evidence preserved."}
+{"version":1,"task_id":"6SXWY6","kind":"result","at":"2026-11-12T20:51:49.478768Z","agent":"codex@plasmite","text":"SIMPLIFY Result-only HTTP errors:61fewer production lines, neutral runtime; draft PQ6AEE.","file":{"path":"docs/proposals/implementation-distillation/http-handlers.md","sha256":"298c473e8a8dffe6f23ca54c6b14fa3501839ec80c58925b1c0cf34f5c2462b8","mtime":"2026-11-12T20:49:14.966006956Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"6SXWY6","kind":"done","at":"2026-11-12T20:51:49.510492Z","agent":"codex@plasmite","text":"Prototype comparisons and measurements complete; report and reproducible evidence preserved."}
+{"version":1,"task_id":"PQ6AEE","kind":"open","at":"2026-11-12T22:13:24.351006Z"}
+{"version":1,"task_id":"PQ6AEE","kind":"claim","at":"2026-11-12T22:13:24.392031Z","agent":"codex"}
+{"version":1,"task_id":"SPQ3MC","kind":"open","at":"2026-11-12T22:13:24.42642Z"}
+{"version":1,"task_id":"SPQ3MC","kind":"claim","at":"2026-11-12T22:13:24.458184Z","agent":"codex"}
+{"version":1,"task_id":"PQ6AEE","kind":"result","at":"2026-11-12T22:20:23.869924Z","agent":"codex","text":"Implemented eleven Result handlers; precedence and admission tests pass; just check passes.","file":{"path":"docs/proposals/implementation-distillation/implementation.md","sha256":"2d51192e966fbd34abe4d1bab12f263b796a8e7a0e8357bf674220dbe6c0d787","mtime":"2026-11-12T22:19:05.006540959Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"PQ6AEE","kind":"done","at":"2026-11-12T22:20:23.907226Z","agent":"codex","text":"Implemented and verified; review and evidence saved."}
+{"version":1,"task_id":"SPQ3MC","kind":"result","at":"2026-11-12T22:20:23.941146Z","agent":"codex","text":"Shared validated Meta reader; 98–99% fewer structured Rust allocation requests; 25-sample controls checked.","file":{"path":"docs/proposals/implementation-distillation/implementation.md","sha256":"2d51192e966fbd34abe4d1bab12f263b796a8e7a0e8357bf674220dbe6c0d787","mtime":"2026-11-12T22:19:05.006540959Z","git_commit":"ddcc67fd4db281b101f1c2b099242dfabccd3a79"}}
+{"version":1,"task_id":"SPQ3MC","kind":"done","at":"2026-11-12T22:20:23.976061Z","agent":"codex","text":"Implemented and verified; flat-string regression did not reproduce."}
+{"version":1,"task_id":"NEYB7J","kind":"created","at":"2026-11-12T23:06:00.540957Z"}
+{"version":1,"task_id":"QXY2OM","kind":"created","at":"2026-11-12T23:06:00.54098Z"}
+{"version":1,"task_id":"A2YASO","kind":"created","at":"2026-11-12T23:06:00.540985Z"}
+{"version":1,"task_id":"VXOTFT","kind":"created","at":"2026-11-12T23:06:00.540988Z"}
+{"version":1,"task_id":"M2FNWG","kind":"created","at":"2026-11-12T23:06:00.54099Z"}
+{"version":1,"task_id":"Q2YAUP","kind":"created","at":"2026-11-12T23:06:00.540993Z"}
+{"version":1,"task_id":"6N22SX","kind":"created","at":"2026-11-12T23:06:00.540996Z"}
+{"version":1,"task_id":"UO7FVO","kind":"created","at":"2026-11-12T23:06:00.540998Z"}
+{"version":1,"task_id":"BTS4ZI","kind":"created","at":"2026-11-12T23:06:00.541Z"}
+{"version":1,"task_id":"F5MEFX","kind":"created","at":"2026-11-12T23:06:00.541002Z"}
+{"version":1,"task_id":"MJAQRU","kind":"created","at":"2026-11-12T23:06:00.541005Z"}
+{"version":1,"task_id":"GSYEYP","kind":"created","at":"2026-11-12T23:06:00.541007Z"}
+{"version":1,"task_id":"WBA6TN","kind":"created","at":"2026-11-12T23:06:00.541011Z"}
+{"version":1,"task_id":"NTY2GK","kind":"created","at":"2026-11-12T23:06:00.541013Z"}
+{"version":1,"task_id":"ECNBVJ","kind":"created","at":"2026-11-12T23:06:00.541015Z"}
+{"version":1,"task_id":"UJHEZU","kind":"created","at":"2026-11-12T23:06:00.541018Z"}
+{"version":1,"task_id":"7CA5OC","kind":"created","at":"2026-11-12T23:06:00.54102Z"}
+{"version":1,"task_id":"27CHGI","kind":"created","at":"2026-11-12T23:06:00.541023Z"}
+{"version":1,"task_id":"WVJROC","kind":"created","at":"2026-11-12T23:06:00.541025Z"}
+{"version":1,"task_id":"2UB4UH","kind":"created","at":"2026-11-12T23:18:48.881406Z"}
+{"version":1,"task_id":"7ECLTU","kind":"created","at":"2026-11-12T23:18:48.914606Z"}
+{"version":1,"task_id":"KAUJM5","kind":"created","at":"2026-11-12T23:18:48.946135Z"}
+{"version":1,"task_id":"IXNZWI","kind":"created","at":"2026-11-12T23:18:48.977665Z"}
+{"version":1,"task_id":"32VKBS","kind":"created","at":"2026-11-12T23:18:49.009258Z"}
+{"version":1,"task_id":"32VKBS","kind":"open","at":"2026-11-12T23:31:18.514803Z"}
+{"version":1,"task_id":"32VKBS","kind":"claim","at":"2026-11-12T23:31:18.552693Z","agent":"codex"}
+{"version":1,"task_id":"7ECLTU","kind":"open","at":"2026-11-12T23:32:24.133844Z"}
+{"version":1,"task_id":"7ECLTU","kind":"claim","at":"2026-11-12T23:32:24.171346Z","agent":"codex"}
+{"version":1,"task_id":"BTS4ZI","kind":"open","at":"2026-11-12T23:32:58.930598Z"}
+{"version":1,"task_id":"BTS4ZI","kind":"claim","at":"2026-11-12T23:32:58.971099Z","agent":"codex"}
+{"version":1,"task_id":"NTY2GK","kind":"open","at":"2026-11-12T23:33:45.355246Z"}
+{"version":1,"task_id":"NTY2GK","kind":"claim","at":"2026-11-12T23:33:45.392232Z","agent":"codex"}
+{"version":1,"task_id":"32VKBS","kind":"result","at":"2026-11-12T23:34:58.585988Z","agent":"codex","text":"Payload-tree move committed; focused tests pass; end-to-end acceptance pending.","file":{"path":"docs/proposals/language-boundary-performance.md","sha256":"feb4a93caaa270d92f2136a4524763fda4e9a5af1606af62036e20115d0fd17f","mtime":"2026-11-12T23:34:58.552829412Z","git_commit":"0aea3dfffe2589bda4d423961eb5e3bd7d629e3f"}}
+{"version":1,"task_id":"7ECLTU","kind":"result","at":"2026-11-12T23:34:58.631288Z","agent":"codex","text":"Native parser committed; exactness tests and parse diagnostics pass; transport acceptance pending.","file":{"path":"docs/proposals/language-boundary-performance.md","sha256":"feb4a93caaa270d92f2136a4524763fda4e9a5af1606af62036e20115d0fd17f","mtime":"2026-11-12T23:34:58.552829412Z","git_commit":"0aea3dfffe2589bda4d423961eb5e3bd7d629e3f"}}
+{"version":1,"task_id":"27CHGI","kind":"open","at":"2026-11-12T23:35:18.638865Z"}
+{"version":1,"task_id":"2UB4UH","kind":"open","at":"2026-11-12T23:35:18.674386Z"}
+{"version":1,"task_id":"6N22SX","kind":"open","at":"2026-11-12T23:35:18.709033Z"}
+{"version":1,"task_id":"7CA5OC","kind":"open","at":"2026-11-12T23:35:18.745543Z"}
+{"version":1,"task_id":"A2YASO","kind":"open","at":"2026-11-12T23:35:18.781921Z"}
+{"version":1,"task_id":"ECNBVJ","kind":"open","at":"2026-11-12T23:35:18.817764Z"}
+{"version":1,"task_id":"F5MEFX","kind":"open","at":"2026-11-12T23:35:18.852158Z"}
+{"version":1,"task_id":"GSYEYP","kind":"open","at":"2026-11-12T23:35:18.884428Z"}
+{"version":1,"task_id":"IXNZWI","kind":"open","at":"2026-11-12T23:35:18.918409Z"}
+{"version":1,"task_id":"KAUJM5","kind":"open","at":"2026-11-12T23:35:18.952247Z"}
+{"version":1,"task_id":"M2FNWG","kind":"open","at":"2026-11-12T23:35:18.993521Z"}
+{"version":1,"task_id":"MJAQRU","kind":"open","at":"2026-11-12T23:35:19.030899Z"}
+{"version":1,"task_id":"Q2YAUP","kind":"open","at":"2026-11-12T23:35:19.067596Z"}
+{"version":1,"task_id":"QXY2OM","kind":"open","at":"2026-11-12T23:35:19.100836Z"}
+{"version":1,"task_id":"UJHEZU","kind":"open","at":"2026-11-12T23:35:19.135618Z"}
+{"version":1,"task_id":"UO7FVO","kind":"open","at":"2026-11-12T23:35:19.173559Z"}
+{"version":1,"task_id":"VXOTFT","kind":"open","at":"2026-11-12T23:35:19.209611Z"}
+{"version":1,"task_id":"WBA6TN","kind":"open","at":"2026-11-12T23:35:19.244182Z"}
+{"version":1,"task_id":"WVJROC","kind":"open","at":"2026-11-12T23:35:19.280168Z"}
+{"version":1,"task_id":"NTY2GK","kind":"result","at":"2026-11-12T23:36:38.139966Z","agent":"codex","text":"Go ownership and tag allocation changes pass suites; decode saves one allocation; full-path acceptance pending.","file":{"path":"docs/proposals/language-boundary-performance.md","sha256":"9847a263853eb2cdb226689a821b820cfe5d6e2e6ff3c69db8fb1e1da07d17ab","mtime":"2026-11-12T23:36:38.109803039Z","git_commit":"0aea3dfffe2589bda4d423961eb5e3bd7d629e3f"}}
+{"version":1,"task_id":"BTS4ZI","kind":"result","at":"2026-11-12T23:36:38.1798Z","agent":"codex","text":"UDP byte copies removed; 50 Python tests pass (one skip); full-path timing acceptance pending.","file":{"path":"docs/proposals/language-boundary-performance.md","sha256":"9847a263853eb2cdb226689a821b820cfe5d6e2e6ff3c69db8fb1e1da07d17ab","mtime":"2026-11-12T23:36:38.109803039Z","git_commit":"0aea3dfffe2589bda4d423961eb5e3bd7d629e3f"}}
+{"version":1,"task_id":"MJAQRU","kind":"claim","at":"2026-11-12T23:37:53.315001Z","agent":"codex"}
+{"version":1,"task_id":"KAUJM5","kind":"claim","at":"2026-11-12T23:40:25.396857Z","agent":"codex"}
+{"version":1,"task_id":"MJAQRU","kind":"result","at":"2026-11-13T00:01:02.127287Z","agent":"codex","text":"Adopt raw ownership transfer; retain JSON compaction; release measurements and Node/GC/package tests pass.","file":{"path":"docs/performance/language-boundary-results/node-owned/README.md","sha256":"5b2658485c8d18cdec90349c326db8a532d4fd5ee06afaa3dd9129b16bcfda45","mtime":"2026-11-13T00:01:02.055709493Z","git_commit":"53a6bcd4b6d53513d9c27d159de981056996f522"}}
+{"version":1,"task_id":"MJAQRU","kind":"done","at":"2026-11-13T00:01:02.165531Z","agent":"codex","text":"Transferred raw snapshots with allocator-matched finalization; measured and retained JSON compaction."}
+{"version":1,"task_id":"Q2YAUP","kind":"claim","at":"2026-11-13T00:02:31.569735Z","agent":"codex"}
+{"version":1,"task_id":"KAUJM5","kind":"result","at":"2026-11-13T00:53:50.037537Z","agent":"codex","text":"Cache prototype: +3% JSON throughput; paced latency unchanged. Resource-pressure checks remain."}
+{"version":1,"task_id":"Q2YAUP","kind":"result","at":"2026-11-13T00:55:26.793878Z","agent":"codex","text":"Binary pipeline: +24% small/+37% large throughput; large CPU -26%. Rust selection timings remain.","file":{"path":"docs/performance/language-boundary-results/core-binary/README.md","sha256":"4fab8ed9b114d36f76865ab79e24bf18e3d686aa7260f0c28ad0b2b934fe0da2","mtime":"2026-11-13T00:53:44.156789065Z","git_commit":"1e29a6a14b74b4e63fa0d494f7963e9776b73989"}}
+{"version":1,"task_id":"UO7FVO","kind":"claim","at":"2026-11-13T00:56:28.089911Z","agent":"codex"}
+{"version":1,"task_id":"UO7FVO","kind":"result","at":"2026-11-13T01:01:10.458935Z","agent":"codex","text":"Numeric receipts: +53% small/+67% large Python pipeline throughput; combined CPU -25%; all bindings pass.","file":{"path":"docs/performance/language-boundary-results/append-receipts/README.md","sha256":"7fbcbc7a38fd147e596d7200a84074e0d4475ae1da6024ec1e819c4d3838df2b","mtime":"2026-11-13T01:00:42.992375539Z","git_commit":"5dcaa4db99914bba9970c4a48352c1cb3dac7239"}}
+{"version":1,"task_id":"UO7FVO","kind":"done","at":"2026-11-13T01:03:33.861172Z","agent":"codex","text":"Implemented Rust/C/Python/Node/Go numeric commit receipts. Binding suites, native Node lint, types and just check passed; matched complete pipeline evidence records gains and limits."}
+{"version":1,"task_id":"M2FNWG","kind":"claim","at":"2026-11-13T01:04:18.81359Z","agent":"codex"}
+{"version":1,"task_id":"M2FNWG","kind":"result","at":"2026-11-13T01:14:12.600725Z","agent":"codex","text":"Parse-once structural sizing: +7% numeric-receipt pipeline, +5% wide; large output allocation -44%.","file":{"path":"docs/performance/language-boundary-results/encoding/README.md","sha256":"258f5ce1d474543e9e30f9bbce60c12d79de3f1eaebe9b12d6c0a74093d1ad39","mtime":"2026-11-13T01:13:16.259561765Z","git_commit":"7db63b591f8271e532ee4b0e0622fec51fbd0b02"}}
+{"version":1,"task_id":"M2FNWG","kind":"done","at":"2026-11-13T01:16:54.948905Z","agent":"codex","text":"Adopted one owned parsed document and a value-count size estimate after matched full/numeric pipeline and allocation comparisons. Kept bounded retries and exact cap behavior; recorded wide-capacity and large-text timing tradeoffs. just check passed."}
+{"version":1,"task_id":"KAUJM5","kind":"result","at":"2026-11-13T01:20:09.520491Z","agent":"codex","text":"Adopt cache: +3% throughput; macOS +1 descriptor/written Pool, all released on close; idle CPU unchanged.","file":{"path":"docs/performance/language-boundary-results/core-binary/README.md","sha256":"9562da17655ca24905d5193e235754284665bd4a0de1fe3e53c77a736fcb4b12","mtime":"2026-11-13T01:18:37.437596599Z","git_commit":"8ec1903729eda9d6226a3f3e33842d86cab70177"}}
+{"version":1,"task_id":"KAUJM5","kind":"done","at":"2026-11-13T01:20:20.378649Z","agent":"codex","text":"Adopted measured handle reuse. Verified native close/reopen and thread transfer, independent reader positions, three 64-pool resource cycles and idle CPU; documented one extra macOS descriptor per written Pool. Full gate passed before final test additions; focused tests and clippy pass."}
+{"version":1,"task_id":"Q2YAUP","kind":"result","at":"2026-11-13T01:36:25.914759Z","agent":"codex","text":"Adopt validator: binary pipeline +24–37%; Rust raw consumption takes 52–65% less time, 10→5 Rust allocs.","file":{"path":"docs/performance/language-boundary-results/core-binary/README.md","sha256":"ef04fc854da65d3dea0349ad84dd6a1039f347abb0adf3702e6ce787e86f9e7c","mtime":"2026-11-13T01:36:25.855965584Z","git_commit":"1bf145f283683f6c12ddbe5415e6e56fe7ad2455"}}
+{"version":1,"task_id":"Q2YAUP","kind":"done","at":"2026-11-13T01:36:25.951237Z","agent":"codex","text":"Completed shared binary validation with differential correctness, matched concurrent binary pipeline, isolated Rust raw/tag/metadata consumers and JSON/snapshot controls. Recorded allocation counts, wide JSON slowdown and scope limits; implementation passed just check."}
+{"version":1,"task_id":"QXY2OM","kind":"claim","at":"2026-11-13T01:39:17.53204Z","agent":"codex"}
+{"version":1,"task_id":"SZK655","kind":"created","at":"2026-11-13T01:39:17.57012Z"}
+{"version":1,"task_id":"QXY2OM","kind":"result","at":"2026-11-13T02:00:46.538785Z","agent":"codex","text":"Matched pipe flush control costs 10% throughput; native call counts identify per-record locking/descriptor work.","file":{"path":"docs/performance/pipe-comparison.md","sha256":"ad9d62268e274aea8f0c204f91c9d30adfc5f4be30f0c3b229da6f5022c828dd","mtime":"2026-11-13T01:58:50.688284239Z","git_commit":"f13215b4f44320998cffa493428413a9974296b6"}}
+{"version":1,"task_id":"7CA5OC","kind":"claim","at":"2026-11-13T02:00:46.608814Z","agent":"codex"}
+{"version":1,"task_id":"SZK655","kind":"claim","at":"2026-11-13T02:01:47.401719Z","agent":"codex"}
+{"version":1,"task_id":"SZK655","kind":"result","at":"2026-11-13T02:12:59.32946Z","agent":"codex","text":"Borrowed append guard removes per-record descriptor duplication/close; binary pipeline +6%, JSON +1–2%.","file":{"path":"docs/performance/language-boundary-results/append-descriptors/README.md","sha256":"ccb3bbaf117933282b85f61cdf88bae4cc7521b1fc4719a0112a3e8f2ef20f54","mtime":"2026-11-13T02:12:59.288203066Z","git_commit":"cb8342e143b35480c1d6a74f73cdf7ef7112713f"}}
+{"version":1,"task_id":"SZK655","kind":"done","at":"2026-11-13T02:12:59.366437Z","agent":"codex","text":"Adopted a borrowed guard and narrower field mutation helper with no unsafe or public API change. Native probe confirms 10,000 closes become zero while locks/stat/posts match. Full, numeric and raw matched pipelines verified; all 60 pool tests, clippy and just check passed."}
+{"version":1,"task_id":"7CA5OC","kind":"result","at":"2026-11-13T02:13:10.470566Z","agent":"codex","text":"Public Darwin shared-address spike wakes 3 independent mappings; timeout/change checks pass. Integration pending.","file":{"path":"docs/performance/language-boundary-results/wakeups/README.md","sha256":"061a22bb9f76a7679ff5288164c5ee4ab72807ffc68611d4a86c27eefae5ad80","mtime":"2026-11-13T02:11:37.42049789Z","git_commit":"c3497577aceb875585ab0148108568bd9e0dfe04"}}
+{"version":1,"task_id":"7CA5OC","kind":"result","at":"2026-11-13T17:08:47.415727Z","agent":"codex","text":"macOS p95 6.48 to 0.59 ms; idle CPU -50%; binary throughput -8.1%. Core and binding checks pass.","file":{"path":"docs/performance/language-boundary-results/wakeups/README.md","sha256":"3d55303d46f1964e057b76974a3ef1a3d0ab0463dbc8015b42f2006e40f8c65b","mtime":"2026-11-13T17:08:47.38202905Z","git_commit":"83f5ba62b8050fef36ffed66eedf8a06a1c9b0d9"}}
+{"version":1,"task_id":"7CA5OC","kind":"done","at":"2026-11-13T17:08:56.095419Z","agent":"codex","text":"Adopt macOS shared-address waits with measured latency and idle CPU gains; document the bulk cost."}
+{"version":1,"task_id":"QXY2OM","kind":"result","at":"2026-11-13T17:08:56.132555Z","agent":"codex","text":"Added paced p99, 3-process fan-out, idle CPU, mixed-library delivery and native wait/wake counts.","file":{"path":"docs/performance/language-boundary-results/wakeups/README.md","sha256":"3d55303d46f1964e057b76974a3ef1a3d0ab0463dbc8015b42f2006e40f8c65b","mtime":"2026-11-13T17:08:47.38202905Z","git_commit":"83f5ba62b8050fef36ffed66eedf8a06a1c9b0d9"}}
+{"version":1,"task_id":"A2YASO","kind":"claim","at":"2026-11-13T17:09:38.65628Z","agent":"codex"}
+{"version":1,"task_id":"A2YASO","kind":"result","at":"2026-11-13T17:56:20.471136Z","agent":"codex","text":"Direct JSON reads cut reader time 17-27% and wide pipeline CPU 9.5%; fix float round trips; all checks pass.","file":{"path":"docs/performance/language-boundary-results/c-json/README.md","sha256":"a8b5574b3525cc78ab030d9ebde6ae5665a77568626f5e42a90014967c4143a1","mtime":"2026-11-13T17:55:14.761987851Z","git_commit":"4d3d94c891c050c148a8c0f210944a4b7386d88f"}}
+{"version":1,"task_id":"A2YASO","kind":"done","at":"2026-11-13T17:56:20.518579Z","agent":"codex","text":"Format stored values once, borrow keys/strings/tags, stream base64, and document the corrected numeric policy."}
+{"version":1,"task_id":"27CHGI","kind":"result","at":"2026-11-13T17:56:20.557011Z","text":"C JSON reads now format borrowed Lite3 directly; reuse that seam for requested UDP JSON instead of Value round trips.","file":{"path":"docs/performance/language-boundary-results/c-json/README.md","sha256":"a8b5574b3525cc78ab030d9ebde6ae5665a77568626f5e42a90014967c4143a1","mtime":"2026-11-13T17:55:14.761987851Z","git_commit":"4d3d94c891c050c148a8c0f210944a4b7386d88f"}}
+{"version":1,"task_id":"VXOTFT","kind":"result","at":"2026-11-13T17:56:20.613055Z","text":"A2YASO supplies checked borrowed value views and correct float policy; Rust object reads still need direct decoding.","file":{"path":"docs/performance/language-boundary-results/c-json/README.md","sha256":"a8b5574b3525cc78ab030d9ebde6ae5665a77568626f5e42a90014967c4143a1","mtime":"2026-11-13T17:55:14.761987851Z","git_commit":"4d3d94c891c050c148a8c0f210944a4b7386d88f"}}
+{"version":1,"task_id":"2UB4UH","kind":"claim","at":"2026-11-13T18:22:26.720677Z","agent":"codex"}
+{"version":1,"task_id":"WVJROC","kind":"claim","at":"2026-11-13T18:26:06.276807Z","agent":"codex-node"}
+{"version":1,"task_id":"6N22SX","kind":"claim","at":"2026-11-13T18:26:37.934243Z","agent":"codex"}
+{"version":1,"task_id":"55CLVD","kind":"created","at":"2026-11-13T19:38:24.479454Z"}
+{"version":1,"task_id":"CP2MVR","kind":"created","at":"2026-11-13T19:38:24.479475Z"}
+{"version":1,"task_id":"OHVOLK","kind":"created","at":"2026-11-13T19:38:24.479478Z"}
+{"version":1,"task_id":"DI65XY","kind":"created","at":"2026-11-13T19:38:24.479482Z"}
+{"version":1,"task_id":"SQON5U","kind":"created","at":"2026-11-13T19:38:24.479484Z"}
+{"version":1,"task_id":"KKD6ES","kind":"created","at":"2026-11-13T19:38:24.479487Z"}
+{"version":1,"task_id":"64UWVZ","kind":"created","at":"2026-11-13T19:38:24.479489Z"}
+{"version":1,"task_id":"I4CZVI","kind":"created","at":"2026-11-13T19:38:24.479491Z"}
+{"version":1,"task_id":"DBUIU5","kind":"created","at":"2026-11-13T19:38:24.479494Z"}
+{"version":1,"task_id":"QG7QZI","kind":"created","at":"2026-11-13T19:38:24.479496Z"}
+{"version":1,"task_id":"VHX4HU","kind":"created","at":"2026-11-13T19:38:24.479499Z"}
+{"version":1,"task_id":"ARVEL3","kind":"created","at":"2026-11-13T19:38:24.479501Z"}
+{"version":1,"task_id":"BM2M5X","kind":"created","at":"2026-11-13T19:38:24.479503Z"}
+{"version":1,"task_id":"H77SPZ","kind":"created","at":"2026-11-13T19:38:24.479505Z"}
+{"version":1,"task_id":"APRTTY","kind":"created","at":"2026-11-13T19:38:24.479507Z"}
+{"version":1,"task_id":"MNKXLX","kind":"created","at":"2026-11-13T19:38:24.479508Z"}
+{"version":1,"task_id":"ABPMDK","kind":"created","at":"2026-11-13T19:38:24.47951Z"}
+{"version":1,"task_id":"27CHGI","kind":"cancel","at":"2026-11-13T19:39:20.023204Z","text":"Superseded by 55CLVD; carried to OHVOLK and VHX4HU. Source and results retained."}
+{"version":1,"task_id":"F5MEFX","kind":"cancel","at":"2026-11-13T19:39:34.507173Z","text":"Superseded by 55CLVD; carried to KKD6ES and 64UWVZ. Source and results retained."}
+{"version":1,"task_id":"GSYEYP","kind":"cancel","at":"2026-11-13T19:39:45.415398Z","text":"Superseded by 55CLVD; carried to I4CZVI and DBUIU5. Source and results retained."}
+{"version":1,"task_id":"IXNZWI","kind":"cancel","at":"2026-11-13T19:39:45.454647Z","text":"Superseded by 55CLVD; carried to ARVEL3. Source and results retained."}
+{"version":1,"task_id":"UJHEZU","kind":"cancel","at":"2026-11-13T19:39:45.490296Z","text":"Superseded by 55CLVD; carried to MNKXLX. Source and results retained."}
+{"version":1,"task_id":"VXOTFT","kind":"cancel","at":"2026-11-13T19:39:45.527713Z","text":"Superseded by 55CLVD; carried to SQON5U. Source and results retained."}
+{"version":1,"task_id":"WBA6TN","kind":"cancel","at":"2026-11-13T19:39:45.564158Z","text":"Superseded by 55CLVD; carried to ARVEL3. Source and results retained."}
+{"version":1,"task_id":"2UB4UH","kind":"cancel","at":"2026-11-13T19:39:45.604385Z","agent":"codex","text":"Superseded by 55CLVD; carried to DI65XY. Source and results retained."}
+{"version":1,"task_id":"32VKBS","kind":"cancel","at":"2026-11-13T19:39:45.642992Z","agent":"codex","text":"Superseded by 55CLVD; carried to SQON5U and H77SPZ. Source and results retained."}
+{"version":1,"task_id":"6N22SX","kind":"cancel","at":"2026-11-13T19:39:45.68806Z","agent":"codex","text":"Superseded by 55CLVD; carried to OHVOLK and QG7QZI. Source and results retained."}
+{"version":1,"task_id":"7ECLTU","kind":"cancel","at":"2026-11-13T19:39:45.803006Z","agent":"codex","text":"Superseded by 55CLVD; carried to I4CZVI and DBUIU5 and ABPMDK. Source and results retained."}
+{"version":1,"task_id":"BTS4ZI","kind":"cancel","at":"2026-11-13T19:39:45.844862Z","agent":"codex","text":"Superseded by 55CLVD; carried to KKD6ES and 64UWVZ and VHX4HU and ABPMDK. Source and results retained."}
+{"version":1,"task_id":"ECNBVJ","kind":"cancel","at":"2026-11-13T19:39:45.882396Z","text":"Superseded by 55CLVD; carried to QG7QZI. Source and results retained."}
+{"version":1,"task_id":"NTY2GK","kind":"cancel","at":"2026-11-13T19:39:45.918388Z","agent":"codex","text":"Superseded by 55CLVD; carried to QG7QZI and ABPMDK. Source and results retained."}
+{"version":1,"task_id":"QXY2OM","kind":"cancel","at":"2026-11-13T19:39:45.955226Z","agent":"codex","text":"Superseded by 55CLVD; carried to APRTTY. Source and results retained."}
+{"version":1,"task_id":"WVJROC","kind":"cancel","at":"2026-11-13T19:39:45.993455Z","agent":"codex-node","text":"Superseded by 55CLVD; carried to BM2M5X and H77SPZ. Source and results retained."}
+{"version":1,"task_id":"CP2MVR","kind":"open","at":"2026-11-13T19:39:46.151426Z"}
+{"version":1,"task_id":"OHVOLK","kind":"open","at":"2026-11-13T19:39:46.188893Z"}
+{"version":1,"task_id":"DI65XY","kind":"open","at":"2026-11-13T19:39:46.226024Z"}
+{"version":1,"task_id":"SQON5U","kind":"open","at":"2026-11-13T19:39:46.263461Z"}
+{"version":1,"task_id":"KKD6ES","kind":"open","at":"2026-11-13T19:39:46.299857Z"}
+{"version":1,"task_id":"64UWVZ","kind":"open","at":"2026-11-13T19:39:46.335806Z"}
+{"version":1,"task_id":"I4CZVI","kind":"open","at":"2026-11-13T19:39:46.371828Z"}
+{"version":1,"task_id":"DBUIU5","kind":"open","at":"2026-11-13T19:39:46.407791Z"}
+{"version":1,"task_id":"QG7QZI","kind":"open","at":"2026-11-13T19:39:46.493747Z"}
+{"version":1,"task_id":"VHX4HU","kind":"open","at":"2026-11-13T19:39:46.530291Z"}
+{"version":1,"task_id":"ARVEL3","kind":"open","at":"2026-11-13T19:39:46.565842Z"}
+{"version":1,"task_id":"BM2M5X","kind":"open","at":"2026-11-13T19:39:46.605704Z"}
+{"version":1,"task_id":"H77SPZ","kind":"open","at":"2026-11-13T19:39:46.645964Z"}
+{"version":1,"task_id":"APRTTY","kind":"open","at":"2026-11-13T19:39:46.684792Z"}
+{"version":1,"task_id":"MNKXLX","kind":"open","at":"2026-11-13T19:39:46.721318Z"}
+{"version":1,"task_id":"ABPMDK","kind":"open","at":"2026-11-13T19:39:46.837812Z"}
+{"version":1,"task_id":"CP2MVR","kind":"claim","at":"2026-11-13T19:49:17.587392Z","agent":"codex-contract"}
+{"version":1,"task_id":"APRTTY","kind":"claim","at":"2026-11-13T19:49:21.865577Z","agent":"codex-measurements"}
+{"version":1,"task_id":"OHVOLK","kind":"claim","at":"2026-11-13T19:49:26.02976Z","agent":"codex-core-views"}
+{"version":1,"task_id":"DI65XY","kind":"claim","at":"2026-11-13T19:51:11.636496Z","agent":"codex-root"}
+{"version":1,"task_id":"CP2MVR","kind":"result","at":"2026-11-13T19:51:20.014669Z","agent":"codex-contract","text":"Additive contract, 16 oracle cases and strict TypeScript examples pass; commit 53d16bc.","file":{"path":"spec/api/v0/SPEC.md","sha256":"454f085691fb3070c5ada70c978313a9735154934704d35251bb6386e526c70d","mtime":"2026-11-13T19:50:21.325963555Z","git_commit":"53d16bccbcac749a900d84d3b6009951e6dcd685"}}
+{"version":1,"task_id":"CP2MVR","kind":"done","at":"2026-11-13T19:51:20.06114Z","agent":"codex-contract","text":"Defined the additive owned-view contract and executable conformance examples in 53d16bc."}
+{"version":1,"task_id":"I4CZVI","kind":"claim","at":"2026-11-13T19:51:36.894772Z","agent":"codex-node-views"}
+{"version":1,"task_id":"OHVOLK","kind":"result","at":"2026-11-13T20:03:16.06559Z","agent":"codex-core-views","text":"Commit b8903c7 adds owned views; 240 tests and clippy pass. Small cold reads regress 18%; cursor/index work remains."}
+{"version":1,"task_id":"APRTTY","kind":"result","at":"2026-11-13T20:05:36.167445Z","agent":"codex-measurements","text":"1383dcd: five-runtime baselines and pipeline/copy/validation controls; unsupported view lanes remain explicit.","file":{"path":"docs/performance/language-boundary-results/owned-views/README.md","sha256":"4481866cb285d81f64c54f6d261f62ac6b3908567587a20976880e744dfcd0df","mtime":"2026-11-13T20:03:13.091046626Z","git_commit":"1383dcd20a4e619b6656972d6fd41bb852de75b3"}}
+{"version":1,"task_id":"APRTTY","kind":"done","at":"2026-11-13T20:05:36.213002Z","agent":"codex-measurements","text":"Established current baselines with verified raw runs. Each runtime task adds its own new API lanes as it lands."}
+{"version":1,"task_id":"DI65XY","kind":"result","at":"2026-11-13T20:10:00.70542Z","agent":"codex-root","text":"C traversal: small view throughput +7.4%; wide -1.6% throughput/-7.5% CPU; legacy controls stable.","file":{"path":"docs/performance/language-boundary-results/owned-views/README.md","sha256":"7d929b38ff0f2df66721b30b0dbc057f88fd35a69bd68a6c9510da61fee7a500","mtime":"2026-11-13T20:09:48.172560971Z","git_commit":"1383dcd20a4e619b6656972d6fd41bb852de75b3"}}
+{"version":1,"task_id":"KKD6ES","kind":"claim","at":"2026-11-13T20:10:24.851428Z","agent":"codex-python-views"}
+{"version":1,"task_id":"I4CZVI","kind":"result","at":"2026-11-13T20:39:26.547092Z","agent":"codex-node-views","text":"Native views work; scalar/map/prefix costs measured and improved; full-native conversion still needs a faster path.","file":{"path":"docs/performance/language-boundary-results/node-views/README.md","sha256":"7803c63477054b1e4d3c98e74776718f12376720e65c28dd90328f5aec1993f0","mtime":"2026-11-13T20:38:23.316387265Z","git_commit":"6fe188fd5f8c06c77e282aaf16e6789ec81fe2ff"}}
+{"version":1,"task_id":"OHVOLK","kind":"result","at":"2026-11-13T20:56:13.091932Z","agent":"codex-core-views","text":"3a9ae92: one-pass proof; 248 tests/clippy pass; small cold545→272ns, wide32→15us. Cached conversion flag next."}
+{"version":1,"task_id":"KKD6ES","kind":"result","at":"2026-11-13T20:59:21.982565Z","agent":"codex-python-views","text":"Native Python views + fallback; 60 tests and three sdist-built wheels pass; measured sparse/full/JSON costs. 49b044e"}
+{"version":1,"task_id":"KKD6ES","kind":"done","at":"2026-11-13T20:59:22.017226Z","agent":"codex-python-views"}
+{"version":1,"task_id":"64UWVZ","kind":"claim","at":"2026-11-13T21:01:23.300435Z","agent":"codex-python-views"}
+{"version":1,"task_id":"OHVOLK","kind":"done","at":"2026-11-13T21:03:17.685893Z","agent":"codex-core-views","text":"Immutable owners/cursors/index proof/read-into complete;3a9ae92+4c686cb,248tests/clippy and matched evidence."}
+{"version":1,"task_id":"QG7QZI","kind":"claim","at":"2026-11-13T21:03:17.72816Z","agent":"codex-core-views"}
+{"version":1,"task_id":"SQON5U","kind":"claim","at":"2026-11-13T21:05:00.422234Z","agent":"codex-root"}
+{"version":1,"task_id":"I4CZVI","kind":"result","at":"2026-11-13T21:08:34.024252Z","agent":"codex-node-views","text":"Proxy views work; copies 2–3.8x faster, exact fallback 28% faster; 49 Node tests pass. Committed 289fe99.","file":{"path":"docs/performance/language-boundary-results/node-views/README.md","sha256":"65cc9621179c9957910295904a15f77897ac74da1a226a83c0720aba7b376998","mtime":"2026-11-13T21:06:30.040138554Z","git_commit":"289fe9953c9d1da95eccc2965513137a1d964f86"}}
+{"version":1,"task_id":"I4CZVI","kind":"done","at":"2026-11-13T21:08:34.113938Z","agent":"codex-node-views","text":"Delivered additive getView, idiomatic immutable Proxy/array protocols, types, native ownership and measured copy paths."}
+{"version":1,"task_id":"DBUIU5","kind":"claim","at":"2026-11-13T21:08:44.600203Z","agent":"codex-node-views"}
+{"version":1,"task_id":"SQON5U","kind":"result","at":"2026-11-13T21:09:01.334779Z","agent":"codex-root","text":"Direct decode committed: cold typed reads 13–68% faster; borrowed strings/bytes and one output-vector allocation.","file":{"path":"docs/performance/language-boundary-results/owned-views/README.md","sha256":"ad49b9ab6f59a23e7ee983cf8ab1babd697859a9f7a72ae6d0e4c4fe023a3e9c","mtime":"2026-11-13T21:08:50.921862507Z","git_commit":"0c74704337a610aa598676ae02630b300bdf96bf"}}
+{"version":1,"task_id":"DI65XY","kind":"result","at":"2026-11-13T21:13:47.645544Z","agent":"codex-root","text":"Native C builder committed with matched benchmarks: wide input 15% faster, long string 47%; small unchanged.","file":{"path":"docs/performance/language-boundary-results/owned-views/README.md","sha256":"ad49b9ab6f59a23e7ee983cf8ab1babd697859a9f7a72ae6d0e4c4fe023a3e9c","mtime":"2026-11-13T21:08:50.921862507Z","git_commit":"0c74704337a610aa598676ae02630b300bdf96bf"}}
+{"version":1,"task_id":"QG7QZI","kind":"result","at":"2026-11-13T21:34:57.382768Z","agent":"codex-core-views","text":"4e7fa95: managed views/cgo proof+selection/typed fast case; race+pointer checks pass. ASCII partials/producer next."}
+{"version":1,"task_id":"64UWVZ","kind":"result","at":"2026-11-13T21:39:43.86336Z","agent":"codex-python-views","text":"8752e35: native input + retained views; 70 tests/3 wheels pass. Small pipeline lock-cadence cause captured for MNKXLX."}
+{"version":1,"task_id":"64UWVZ","kind":"done","at":"2026-11-13T21:39:43.900473Z","agent":"codex-python-views"}
+{"version":1,"task_id":"MNKXLX","kind":"claim","at":"2026-11-13T21:39:43.936305Z","agent":"codex-python-batches"}
+{"version":1,"task_id":"QG7QZI","kind":"result","at":"2026-11-13T22:33:13.530998Z","agent":"codex-core-views","text":"5f4041c: partial ASCII structs native; wide24.6→9.8us,array33.6→11.9us,small211ns warm. Producer next."}
+{"version":1,"task_id":"DBUIU5","kind":"result","at":"2026-11-13T22:44:30.9352Z","agent":"codex-node-views","text":"d67cd3f: native append/forward works; 71 tests pass. Text/reuse win; bulk object traversal needs tuning.","file":{"path":"docs/performance/language-boundary-results/node-views/README.md","sha256":"71fb7abf24c05683ccb5ea0dc9b5c9bd43b77da0f6ece64bf08148d2219a8a98","mtime":"2026-11-13T22:38:59.642026681Z","git_commit":"d67cd3f40b66ffc13e350e2db9815d1284ecd3a5"}}
+{"version":1,"task_id":"DI65XY","kind":"done","at":"2026-11-13T23:00:23.920207Z","agent":"codex-root","text":"Encode-once writer, retained results, forwarding and construction proof committed; matched C producer gains 6–28%."}
+{"version":1,"task_id":"SQON5U","kind":"done","at":"2026-11-13T23:00:23.968836Z","agent":"codex-root","text":"Direct Rust Serde codecs, borrowed/owned values and append/get views committed with complete benchmark controls."}
+{"version":1,"task_id":"VHX4HU","kind":"claim","at":"2026-11-13T23:05:20.288049Z","agent":"codex-root"}
+{"version":1,"task_id":"QG7QZI","kind":"result","at":"2026-11-13T23:08:32.140904Z","agent":"codex-core-views","text":"094fe16: Go native producer complete; race/cgocheck2/Go1.22 pass. Fixed benchmark checkpoint; central matrix pending."}
+{"version":1,"task_id":"MNKXLX","kind":"result","at":"2026-11-13T23:09:56.607948Z","agent":"codex-python-batches","text":"Ship explicit owned read batches; measured busy delivery +71%, CPU -18%; paced overhead and exact checkpoints recorded.","file":{"path":"docs/performance/language-boundary-results/owned-views/python/batches/README.md","sha256":"07d4efb655b7463ccdb50dcdd2bdc413d428ecc5018254ee7f9cea532fe1de93","mtime":"2026-11-13T23:09:56.498853146Z","git_commit":"f2c8ef13bdc29d4ada2eb092bcba2ca67d2cbb8b"}}
+{"version":1,"task_id":"MNKXLX","kind":"done","at":"2026-11-13T23:09:56.644815Z","agent":"codex-python-batches","text":"Implemented the measured useful read-batch case. Normal reads stay unbuffered; append batching has no demonstrated case here. Python/local C receiving and forwarding also complete their VHX4HU slice. Final integration timing remains with ABPMDK."}
+{"version":1,"task_id":"BM2M5X","kind":"claim","at":"2026-11-13T23:30:11.089379Z","agent":"codex-portable-views"}
+{"version":1,"task_id":"DBUIU5","kind":"result","at":"2026-11-13T23:30:41.196644Z","agent":"codex-node-views","text":"d67cd3f + type/key reuse: native input, forwarding, exact views; array -5.2%, text wins; bulk JSON remains faster.","file":{"path":"docs/performance/language-boundary-results/node-views/README.md","sha256":"470e8ec71f2bf2a9ab33031432b52c7ae18992462d0dc8c9bf322c310fe9b041","mtime":"2026-11-13T23:30:25.220932416Z","git_commit":"7f51b6de0c653860e55d4e8c1c3e5c4f2122cd02"}}
+{"version":1,"task_id":"DBUIU5","kind":"done","at":"2026-11-13T23:30:41.292829Z","agent":"codex-node-views","text":"Native producer semantics, ownership, 22 cases and measured controls complete; traversal limits documented."}
+{"version":1,"task_id":"ARVEL3","kind":"claim","at":"2026-11-13T23:30:46.697368Z","agent":"codex-node-scheduling"}
+{"version":1,"task_id":"H77SPZ","kind":"claim","at":"2026-11-13T23:31:07.717308Z","agent":"codex-root"}
+{"version":1,"task_id":"QG7QZI","kind":"result","at":"2026-11-13T23:32:52.513644Z","agent":"codex-core-views","text":"Central7: text/bytes append -72/-69%; array +75% (descriptor expansion). Evidence archived; keep performance gap open."}
+{"version":1,"task_id":"VHX4HU","kind":"result","at":"2026-11-13T23:36:11.814793Z","agent":"codex-root","text":"de79149: Rust local/UDP views share policies; 12 tests/clippy pass. Frozen stream harness ready for central runs."}
+{"version":1,"task_id":"QG7QZI","kind":"result","at":"2026-11-13T23:51:49.149847Z","agent":"codex-core-views","text":"1b127f7: packed scalars cut Go array bytes70%; race/Go1.22 pass. Reservation rejected; central timing pending."}
+{"version":1,"task_id":"DUTYKD","kind":"created","at":"2026-11-14T00:05:38.378958Z"}
+{"version":1,"task_id":"DUTYKD","kind":"result","at":"2026-11-14T00:08:32.029568Z","text":"Profile: per-value VM crossings dominate large objects; compare one JS capture plus shared native replay."}
+{"version":1,"task_id":"DUTYKD","kind":"claim","at":"2026-11-14T00:09:25.673079Z","agent":"codex-node-input-capture"}
+{"version":1,"task_id":"VHX4HU","kind":"result","at":"2026-11-14T00:18:25.516839Z","agent":"codex-root","text":"Rust/C/Python streams verified; native Python UDP full-result time falls19-58%; Go/Node adapters remain in progress."}
+{"version":1,"task_id":"QG7QZI","kind":"done","at":"2026-11-14T01:24:34.883789Z","agent":"codex-core-views","text":"Central7: array append35.1us vsJSON46.4; pipeline45.9vs59.1. Go-managed views/native input +race/Go1.22 pass."}
+{"version":1,"task_id":"VHX4HU","kind":"result","at":"2026-11-14T01:24:34.923287Z","agent":"codex-root","text":"69863c8+850f3e3: Go local/UDP views, whole forwarding, immutable child bindings; tests pass, central timing pending."}
+{"version":1,"task_id":"ABPMDK","kind":"claim","at":"2026-11-14T01:32:31.660492Z","agent":"codex-root"}
+{"version":1,"task_id":"BM2M5X","kind":"done","at":"2026-11-14T01:58:40.182852Z","agent":"codex-portable-views","text":"Checked Wasm views packaged; 12 focused cases pass; central startup/read/write/retention evidence in 05bf564."}
+{"version":1,"task_id":"H77SPZ","kind":"done","at":"2026-11-14T02:33:17.823378Z","agent":"codex-root","text":"Implement retained HTTP append/get/tail views and exact compact receipts; 20 focused checks pass. Five fixed-server A/B pairs cut object-array append 10–15% and forwarding 17–23%; record combined CPU regressions versus JSON and wire limits in http-views evidence."}
+{"version":1,"task_id":"ARVEL3","kind":"result","at":"2026-11-14T02:42:26.493262Z","agent":"codex-node-scheduling","text":"Selected local probe-first/UDP parked;83 tests pass. Rare128≈0.14/0.22ms; measured CPU/thread costs recorded.","file":{"path":"docs/performance/language-boundary-results/node-views/README.md","sha256":"470e8ec71f2bf2a9ab33031432b52c7ae18992462d0dc8c9bf322c310fe9b041","mtime":"2026-11-13T23:30:25.220932416Z","git_commit":"a5588474da7c08e029ac9b61e67133db4ee7fdef"}}
+{"version":1,"task_id":"ARVEL3","kind":"done","at":"2026-11-14T02:42:26.534723Z","agent":"codex-node-scheduling","text":"Measured and selected source-specific wait paths; owned streams, lifetime/cancel/timeout checks complete."}
+{"version":1,"task_id":"VHX4HU","kind":"done","at":"2026-11-14T02:48:56.995494Z","agent":"codex-root","text":"Deliver owned local/UDP streams across Rust, C, Python, Node and Go with retained children, exact identity, pull/bounded queues, original ordering/gap/cancellation/UDP event semantics. Full release-gate passes; committed Rust/Python/Go/Node raw comparisons preserve selected/full/forward results and regressions."}
+{"version":1,"task_id":"DUTYKD","kind":"done","at":"2026-11-14T04:08:47.069663Z","agent":"codex-node-input-capture","text":"Adopt one shared JavaScript traversal and bounded native writes; retire old Rust walker. Five steady pairs cut array append56% and producer/consumer50%, with lower CPU on all fixtures; preserve cold/short-run penalties and rejected alternatives. Final confirmation pairs and127Nodecases pass on24/26; nativeClippy/types/packages pass."}
+{"version":1,"task_id":"ABPMDK","kind":"done","at":"2026-11-14T04:11:06.032115Z","agent":"codex-root","text":"Align additive interfaces, types, migration and copy/numeric/transport rules across allbindings. Verify finalfullrelease-gate, all127Nodecases on24/26, nativeClippy, Pythonabi3/cp310/fallbackwheels, CABI and crossartifactsmokes. Archive fixedbuildwins, cold/short-run costs and regressions; keep design drafts uncommitted."}
+{"version":1,"task_id":"7KCG37","kind":"claim","at":"2026-11-16T19:56:32.639822Z","agent":"codex-debian-check"}
+{"version":1,"task_id":"2WHZE2","kind":"claim","at":"2026-11-16T19:56:32.683269Z","agent":"codex-debian-check"}
+{"version":1,"task_id":"KFVC5R","kind":"claim","at":"2026-11-16T19:56:32.721799Z","agent":"codex-debian-check"}
+{"version":1,"task_id":"CKFILU","kind":"claim","at":"2026-11-16T19:56:32.7593Z","agent":"codex-debian-check"}
+{"version":1,"task_id":"BGJFNZ","kind":"claim","at":"2026-11-16T20:21:50.638562Z","agent":"codex-debian-check"}
+{"version":1,"task_id":"JS272O","kind":"claim","at":"2026-11-16T20:21:50.67934Z","agent":"codex-debian-check"}
+{"version":1,"task_id":"Q63O3Y","kind":"claim","at":"2026-11-16T20:21:50.717865Z","agent":"codex-debian-check"}
+{"version":1,"task_id":"7KCG37","kind":"result","at":"2026-11-16T20:29:49.536272Z","agent":"codex-debian-check","text":"Documented systemd collector startup, crash restart, and reboot before login.","file":{"path":"docs/record/debian-vm-validation.md","sha256":"40c18c36f6453b23b0c4e0118903970f8519c46ab9f3ca843a48d11304a9d0de","mtime":"2026-11-16T20:29:22.845060936Z","git_commit":"69cafd7c28e3300dae1dda296ada22108a1dac83"}}
+{"version":1,"task_id":"7KCG37","kind":"done","at":"2026-11-16T20:30:00.899845Z","agent":"codex-debian-check","text":"User authorized VM tests and closure of applicable tickets. Use ordinary systemd services and the tested cookbook recipe. Reboot and SIGKILL checks passed."}
+{"version":1,"task_id":"2WHZE2","kind":"result","at":"2026-11-16T20:30:00.938905Z","agent":"codex-debian-check","text":"Verified identifiable readings and retained data through authenticated HTTPS.","file":{"path":"docs/record/debian-vm-validation.md","sha256":"40c18c36f6453b23b0c4e0118903970f8519c46ab9f3ca843a48d11304a9d0de","mtime":"2026-11-16T20:29:22.845060936Z","git_commit":"69cafd7c28e3300dae1dda296ada22108a1dac83"}}
+{"version":1,"task_id":"2WHZE2","kind":"done","at":"2026-11-16T20:30:00.980163Z","agent":"codex-debian-check","text":"User authorized VM tests and closure of applicable tickets. Use application reading IDs and destination reads. Saved access and acknowledged data survived reboot."}
+{"version":1,"task_id":"KFVC5R","kind":"result","at":"2026-11-16T20:30:01.018391Z","agent":"codex-debian-check","text":"Verified connection refusal, lost responses, backpressure, and sender exit.","file":{"path":"docs/record/debian-vm-validation.md","sha256":"40c18c36f6453b23b0c4e0118903970f8519c46ab9f3ca843a48d11304a9d0de","mtime":"2026-11-16T20:29:22.845060936Z","git_commit":"69cafd7c28e3300dae1dda296ada22108a1dac83"}}
+{"version":1,"task_id":"KFVC5R","kind":"done","at":"2026-11-16T20:30:01.060243Z","agent":"codex-debian-check","text":"User authorized VM tests and closure of applicable tickets. Document current behavior: feed exits on connection failure without replay; callers handle unread input. Generic network error hint remains a clarity finding."}
+{"version":1,"task_id":"CKFILU","kind":"result","at":"2026-11-16T20:30:01.101975Z","agent":"codex-debian-check","text":"Verified uncertain append stored once; manual resend created a second record.","file":{"path":"docs/record/debian-vm-validation.md","sha256":"40c18c36f6453b23b0c4e0118903970f8519c46ab9f3ca843a48d11304a9d0de","mtime":"2026-11-16T20:29:22.845060936Z","git_commit":"69cafd7c28e3300dae1dda296ada22108a1dac83"}}
+{"version":1,"task_id":"CKFILU","kind":"done","at":"2026-11-16T20:30:01.141305Z","agent":"codex-debian-check","text":"User authorized VM tests and closure of applicable tickets. Inspect application IDs after an uncertain write before resending. Keep existing delivery behavior."}
+{"version":1,"task_id":"BGJFNZ","kind":"result","at":"2026-11-16T20:30:01.178359Z","agent":"codex-debian-check","text":"Documented receipts, flush requests, and stored data after stdout failure.","file":{"path":"docs/record/debian-vm-validation.md","sha256":"40c18c36f6453b23b0c4e0118903970f8519c46ab9f3ca843a48d11304a9d0de","mtime":"2026-11-16T20:29:22.845060936Z","git_commit":"69cafd7c28e3300dae1dda296ada22108a1dac83"}}
+{"version":1,"task_id":"BGJFNZ","kind":"done","at":"2026-11-16T20:30:01.217699Z","agent":"codex-debian-check","text":"User authorized VM tests and closure of applicable tickets. A receipt confirms append; flush requests storage flush. Output failure can follow a completed append. No power-loss claim."}
+{"version":1,"task_id":"JS272O","kind":"result","at":"2026-11-16T20:30:01.252189Z","agent":"codex-debian-check","text":"Verified separate measurement and destination times with a 60-second-old reading.","file":{"path":"docs/record/debian-vm-validation.md","sha256":"40c18c36f6453b23b0c4e0118903970f8519c46ab9f3ca843a48d11304a9d0de","mtime":"2026-11-16T20:29:22.845060936Z","git_commit":"69cafd7c28e3300dae1dda296ada22108a1dac83"}}
+{"version":1,"task_id":"JS272O","kind":"done","at":"2026-11-16T20:30:01.290183Z","agent":"codex-debian-check","text":"User authorized VM tests and closure of applicable tickets. Keep measurement time in application data; pool time records destination append time."}
+{"version":1,"task_id":"Q63O3Y","kind":"result","at":"2026-11-16T20:30:01.392915Z","agent":"codex-debian-check","text":"Measured bounded history: a 64 KiB pool retained the latest 74 of 1,000 readings.","file":{"path":"docs/record/debian-vm-validation.md","sha256":"40c18c36f6453b23b0c4e0118903970f8519c46ab9f3ca843a48d11304a9d0de","mtime":"2026-11-16T20:29:22.845060936Z","git_commit":"69cafd7c28e3300dae1dda296ada22108a1dac83"}}
+{"version":1,"task_id":"Q63O3Y","kind":"done","at":"2026-11-16T20:30:01.432778Z","agent":"codex-debian-check","text":"User authorized VM tests and closure of applicable tickets. Size pools from representative readings and sampling rate; cookbook records the measured example."}
+{"version":1,"task_id":"VIKZVO","kind":"result","at":"2026-11-16T20:30:01.468214Z","text":"Corrected ARM preview support premise; physical Pi/OS installation choice remains open.","file":{"path":"docs/record/debian-vm-validation.md","sha256":"40c18c36f6453b23b0c4e0118903970f8519c46ab9f3ca843a48d11304a9d0de","mtime":"2026-11-16T20:29:22.845060936Z","git_commit":"69cafd7c28e3300dae1dda296ada22108a1dac83"}}
+{"version":1,"task_id":"CFOZUW","kind":"created","at":"2026-11-17T00:20:22.659486Z"}
+{"version":1,"task_id":"ILCEHR","kind":"created","at":"2026-11-17T00:20:22.659502Z"}
+{"version":1,"task_id":"O5YM7X","kind":"created","at":"2026-11-17T00:20:22.659505Z"}
+{"version":1,"task_id":"ZVPEFS","kind":"created","at":"2026-11-17T00:20:22.659508Z"}
+{"version":1,"task_id":"VUX7X4","kind":"created","at":"2026-11-17T00:20:22.65951Z"}
+{"version":1,"task_id":"H4RTLR","kind":"created","at":"2026-11-17T00:20:22.659512Z"}
+{"version":1,"task_id":"VEFFOZ","kind":"created","at":"2026-11-17T00:20:22.659514Z"}
+{"version":1,"task_id":"L3DJKZ","kind":"created","at":"2026-11-17T00:20:22.659517Z"}
+{"version":1,"task_id":"YY4ABT","kind":"created","at":"2026-11-17T00:20:22.697874Z"}
+{"version":1,"task_id":"ILCEHR","kind":"open","at":"2026-11-17T00:21:13.46822Z"}
+{"version":1,"task_id":"O5YM7X","kind":"open","at":"2026-11-17T00:21:29.165355Z"}
+{"version":1,"task_id":"ZVPEFS","kind":"open","at":"2026-11-17T00:21:29.211849Z"}
+{"version":1,"task_id":"VUX7X4","kind":"open","at":"2026-11-17T00:21:29.250525Z"}
+{"version":1,"task_id":"H4RTLR","kind":"open","at":"2026-11-17T00:21:29.287796Z"}
+{"version":1,"task_id":"VEFFOZ","kind":"open","at":"2026-11-17T00:21:29.325129Z"}
+{"version":1,"task_id":"L3DJKZ","kind":"open","at":"2026-11-17T00:21:29.361713Z"}
+{"version":1,"task_id":"YY4ABT","kind":"open","at":"2026-11-17T00:21:29.399894Z"}
+{"version":1,"task_id":"YY4ABT","kind":"claim","at":"2026-11-17T00:22:58.825218Z","agent":"codex"}
+{"version":1,"task_id":"YY4ABT","kind":"done","at":"2026-11-17T00:25:44.564642Z","agent":"codex","text":"Completed consistency audit and recorded prioritized recommendations in the task body."}
+{"version":1,"task_id":"ILCEHR","kind":"claim","at":"2026-11-17T00:25:44.602088Z","agent":"codex"}
+{"version":1,"task_id":"YY4ABT","kind":"result","at":"2026-11-17T00:26:18.153563Z","text":"Completed API consistency matrix and verified Node create result mismatch; see task body."}
+{"version":1,"task_id":"ILCEHR","kind":"result","at":"2026-11-17T00:57:38.429569Z","agent":"codex","text":"Specified shared follow names, opening boundaries, explicit selection, finite reads and the 1.x exception."}
+{"version":1,"task_id":"ILCEHR","kind":"done","at":"2026-11-17T00:57:38.461715Z","agent":"codex","text":"Specified shared follow names, opening boundaries, explicit selection, finite reads and the 1.x exception."}
+{"version":1,"task_id":"O5YM7X","kind":"claim","at":"2026-11-17T00:57:38.584626Z","agent":"codex"}
+{"version":1,"task_id":"O5YM7X","kind":"result","at":"2026-11-17T00:57:38.623815Z","agent":"codex","text":"Shared Rust/C follow implementation passes Rust and C integration checks; legacy C openings remain compatible."}
+{"version":1,"task_id":"O5YM7X","kind":"done","at":"2026-11-17T00:57:38.657994Z","agent":"codex","text":"Shared Rust/C follow implementation passes Rust and C integration checks; legacy C openings remain compatible."}
+{"version":1,"task_id":"ZVPEFS","kind":"claim","at":"2026-11-17T00:57:38.723382Z","agent":"codex"}
+{"version":1,"task_id":"ZVPEFS","kind":"result","at":"2026-11-17T00:57:38.763362Z","agent":"codex","text":"HTTP follows use shared selection; startup precedes headers and remote regression tests pass."}
+{"version":1,"task_id":"ZVPEFS","kind":"done","at":"2026-11-17T00:57:38.843127Z","agent":"codex","text":"HTTP follows use shared selection; startup precedes headers and remote regression tests pass."}
+{"version":1,"task_id":"VUX7X4","kind":"claim","at":"2026-11-17T00:57:38.912024Z","agent":"codex"}
+{"version":1,"task_id":"VUX7X4","kind":"result","at":"2026-11-17T00:57:38.949792Z","agent":"codex","text":"Python follow methods, views, selections and finite reads pass binding tests and integration."}
+{"version":1,"task_id":"VUX7X4","kind":"done","at":"2026-11-17T00:57:38.980847Z","agent":"codex","text":"Python follow methods, views, selections and finite reads pass binding tests and integration."}
+{"version":1,"task_id":"H4RTLR","kind":"claim","at":"2026-11-17T00:57:39.064195Z","agent":"codex"}
+{"version":1,"task_id":"H4RTLR","kind":"result","at":"2026-11-17T00:57:39.100872Z","agent":"codex","text":"JavaScript local/HTTP/UDP follow APIs, types, packaging and native/portable tests pass integration."}
+{"version":1,"task_id":"H4RTLR","kind":"done","at":"2026-11-17T00:57:39.134873Z","agent":"codex","text":"JavaScript local/HTTP/UDP follow APIs, types, packaging and native/portable tests pass integration."}
+{"version":1,"task_id":"VEFFOZ","kind":"claim","at":"2026-11-17T00:57:39.204089Z","agent":"codex"}
+{"version":1,"task_id":"VEFFOZ","kind":"result","at":"2026-11-17T00:57:39.241268Z","agent":"codex","text":"Go follow APIs and zero-value defaults pass integration; readers open before channels return."}
+{"version":1,"task_id":"VEFFOZ","kind":"done","at":"2026-11-17T00:57:39.275152Z","agent":"codex","text":"Go follow APIs and zero-value defaults pass integration; readers open before channels return."}
+{"version":1,"task_id":"L3DJKZ","kind":"claim","at":"2026-11-17T00:57:39.311705Z","agent":"codex"}
+{"version":1,"task_id":"VUX7X4","kind":"result","at":"2026-11-17T01:01:18.786095Z","text":"Final callback guard check: 7 tests pass; current follow symbols reject callback-closed handles before native calls."}
+{"version":1,"task_id":"L3DJKZ","kind":"result","at":"2026-11-17T01:01:18.820625Z","agent":"codex","text":"Passed just release-gate: strict lint, Rust, integration, C, Node packages and Python wheel runtime checks."}
+{"version":1,"task_id":"L3DJKZ","kind":"done","at":"2026-11-17T01:01:18.863871Z","agent":"codex","text":"Implemented and verified the follow migration across Rust, C, Python, JavaScript, Go and HTTP. The release gate and focused Python callback tests pass. No release published."}
+{"version":1,"task_id":"MV5OSD","kind":"created","at":"2026-11-17T20:29:54.428039Z"}
+{"version":1,"task_id":"TFVUFT","kind":"created","at":"2026-11-17T20:29:54.428054Z"}
+{"version":1,"task_id":"QLYP5O","kind":"created","at":"2026-11-17T20:29:54.428059Z"}
+{"version":1,"task_id":"VQOVNR","kind":"created","at":"2026-11-17T20:29:54.428063Z"}
+{"version":1,"task_id":"ZLX2TK","kind":"created","at":"2026-11-17T20:29:54.428065Z"}
+{"version":1,"task_id":"RHVV3L","kind":"created","at":"2026-11-17T20:29:54.428067Z"}
+{"version":1,"task_id":"OO2N5C","kind":"created","at":"2026-11-17T20:29:54.467794Z"}
+{"version":1,"task_id":"UMHTRO","kind":"created","at":"2026-11-17T20:29:54.467808Z"}
+{"version":1,"task_id":"IKAB6R","kind":"created","at":"2026-11-17T20:29:54.46781Z"}
+{"version":1,"task_id":"KPQG5M","kind":"created","at":"2026-11-17T20:29:54.467812Z"}
+{"version":1,"task_id":"XQAFBQ","kind":"created","at":"2026-11-17T20:29:54.467814Z"}
+{"version":1,"task_id":"FLWSV6","kind":"created","at":"2026-11-17T20:29:54.467815Z"}
+{"version":1,"task_id":"HLPBQV","kind":"created","at":"2026-11-17T20:29:54.504666Z"}
+{"version":1,"task_id":"EYM3IB","kind":"created","at":"2026-11-17T20:29:54.504685Z"}
+{"version":1,"task_id":"YHYKSA","kind":"created","at":"2026-11-17T20:29:54.504688Z"}
+{"version":1,"task_id":"EWBWTJ","kind":"created","at":"2026-11-17T20:29:54.504693Z"}
+{"version":1,"task_id":"CNQL3U","kind":"created","at":"2026-11-17T20:29:54.541435Z"}
+{"version":1,"task_id":"AJN6IX","kind":"created","at":"2026-11-17T20:29:54.541479Z"}
+{"version":1,"task_id":"ZJQFWJ","kind":"created","at":"2026-11-17T20:29:54.541482Z"}
+{"version":1,"task_id":"RRVSHR","kind":"created","at":"2026-11-17T20:29:54.541484Z"}
+{"version":1,"task_id":"46ZO3V","kind":"created","at":"2026-11-17T20:29:54.541486Z"}
+{"version":1,"task_id":"T2QQ6P","kind":"created","at":"2026-11-17T20:29:54.541488Z"}
+{"version":1,"task_id":"TFVUFT","kind":"open","at":"2026-11-17T20:41:56.272076Z"}
+{"version":1,"task_id":"KPQG5M","kind":"open","at":"2026-11-17T20:41:56.315523Z"}
+{"version":1,"task_id":"TFVUFT","kind":"claim","at":"2026-11-17T20:41:56.353732Z","agent":"codex"}
+{"version":1,"task_id":"KPQG5M","kind":"claim","at":"2026-11-17T20:41:56.392773Z","agent":"codex"}
+{"version":1,"task_id":"TFVUFT","kind":"result","at":"2026-11-17T20:46:22.223149Z","agent":"codex","text":"Draft contract ready for review; it defines the API, native library and HTTP cutover.","file":{"path":"spec/v2/SPEC.md","sha256":"d69f2bc27f026b62b5ba63cbb4860ebf1faf91b167292cbac9a6d47111b2712d","mtime":"2026-11-17T20:46:04.183273663Z","git_commit":"80a92f1f1db50b83f52c2b7005366c6e69a6071b"}}
+{"version":1,"task_id":"KPQG5M","kind":"result","at":"2026-11-17T20:46:31.191933Z","agent":"codex","text":"Nine pipe tests pass on macOS and Debian. Windows native pipe closes; PowerShell 7 Select-Object keeps it open."}
+{"version":1,"task_id":"TFVUFT","kind":"result","at":"2026-11-17T20:46:46.26077Z","agent":"codex","text":"Brandon approved the v2 contract review fixes: PLS2 records, UDP fetch, versioned native library names","file":{"path":"spec/v2/SPEC.md","sha256":"d69f2bc27f026b62b5ba63cbb4860ebf1faf91b167292cbac9a6d47111b2712d","mtime":"2026-11-17T20:46:04.183273663Z","git_commit":"80a92f1f1db50b83f52c2b7005366c6e69a6071b"}}
+{"version":1,"task_id":"TFVUFT","kind":"done","at":"2026-11-17T20:46:59.161813Z","agent":"codex","text":"Reviewed contract covers the approved cutover. Track the portable stop decision separately in KPQG5M."}
+{"version":1,"task_id":"QLYP5O","kind":"open","at":"2026-11-17T20:46:59.206067Z"}
+{"version":1,"task_id":"QLYP5O","kind":"claim","at":"2026-11-17T20:46:59.246627Z","agent":"codex"}
+{"version":1,"task_id":"QLYP5O","kind":"result","at":"2026-11-17T20:51:14.009595Z","agent":"codex","text":"Shared cases cover Brygg, finite reads, gaps, writes, pools and the 1.3.0 file. CLI runner awaits CLI cutover.","file":{"path":"tests/fixtures/conformance/reads.json","sha256":"b81d586ce20bfedde78f77ab5fc6d3013e2a2634f98ed688f2a18e15ab783ffe","mtime":"2026-11-17T20:47:03.444291051Z","git_commit":"80a92f1f1db50b83f52c2b7005366c6e69a6071b"}}
+{"version":1,"task_id":"QLYP5O","kind":"done","at":"2026-11-17T20:51:14.050665Z","agent":"codex"}
+{"version":1,"task_id":"VQOVNR","kind":"open","at":"2026-11-17T20:51:14.091566Z"}
+{"version":1,"task_id":"VQOVNR","kind":"claim","at":"2026-11-17T20:51:14.13219Z","agent":"codex"}
+{"version":1,"task_id":"KPQG5M","kind":"block","at":"2026-11-17T20:54:21.724073Z","agent":"codex","text":"Native Windows pipes close correctly. PowerShell 7 cmdlet pipelines can keep them open. Awaiting the decision on --one."}
+{"version":1,"task_id":"VQOVNR","kind":"result","at":"2026-11-17T20:54:21.764503Z","agent":"codex","text":"Shared Rust reads pass for Brygg, finite snapshots, gap fields, tags and the 1.3.0 fixture.","file":{"path":"tests/conformance_v2.rs","sha256":"16edadebd04d45bb56af6b204bcb0321234c95d09c6617c4ce95eaf0073e2f84","mtime":"2026-11-17T20:54:01.032483987Z","git_commit":"80a92f1f1db50b83f52c2b7005366c6e69a6071b"}}
+{"version":1,"task_id":"RHVV3L","kind":"result","at":"2026-11-17T20:55:00.723618Z","text":"C read, feed and create probes pass. Exact exported names await versioned-library packaging.","file":{"path":"src/abi_v2.rs","sha256":"0b964b931eb34365c193aaa179e8274c49a9fb879d8169303e2654fa84d70053","mtime":"2026-11-17T20:54:41.254446762Z","git_commit":"80a92f1f1db50b83f52c2b7005366c6e69a6071b"}}
+{"version":1,"task_id":"XQAFBQ","kind":"result","at":"2026-11-17T20:55:00.766383Z","text":"Loopback tests pass for finite and live reads, terminal gaps, cutoff continuation and broken connections.","file":{"path":"src/http_v2.rs","sha256":"3296c2cb223ec256d90b7dc56296854e08248b8e48f7613587127749b6770d51","mtime":"2026-11-17T20:52:29.417861212Z","git_commit":"80a92f1f1db50b83f52c2b7005366c6e69a6071b"}}
+{"version":1,"task_id":"KPQG5M","kind":"open","at":"2026-11-17T20:57:44.140774Z"}
+{"version":1,"task_id":"KPQG5M","kind":"done","at":"2026-11-17T20:57:44.178115Z","text":"Keep --one across shells. The Linux, macOS and Windows probes established why."}
+{"version":1,"task_id":"YHYKSA","kind":"result","at":"2026-11-17T20:59:48.368843Z","text":"macOS npm pack/install passed with versioned dylib. Node rejected an ABI 1 test library at load."}
+{"version":1,"task_id":"UMHTRO","kind":"result","at":"2026-11-17T20:59:48.407841Z","text":"CLI fetch conformance runner enabled. Local and HTTP follow use core selectors and preserve --one."}
+{"version":1,"task_id":"VQOVNR","kind":"done","at":"2026-11-17T22:16:41.652555Z","agent":"codex","text":"Rust, CLI, and binding conformance pass for opening position, finite snapshots, cancellation, and filtered retention gaps. The installed Python wheel test also verifies that a finite batch keeps the opening boundary."}
+{"version":1,"task_id":"ZLX2TK","kind":"open","at":"2026-11-17T22:16:48.820539Z"}
+{"version":1,"task_id":"ZLX2TK","kind":"done","at":"2026-11-17T22:16:48.860258Z","text":"Rust feed, pool lifecycle, numeric receipts, and exact message time pass conformance. Public Rust and UDP operations use feed, follow, and fetch."}
+{"version":1,"task_id":"RHVV3L","kind":"open","at":"2026-11-17T22:16:48.89891Z"}
+{"version":1,"task_id":"RHVV3L","kind":"done","at":"2026-11-17T22:16:48.939473Z","text":"ABI 2 smoke and adversarial tests pass. macOS rejects mixed 1.3.0 and 2.0 libraries in both directions. Debian checks the versioned ELF dependency, and a Windows C consumer links and loads ABI 2 through plasmite2.lib."}
+{"version":1,"task_id":"EWBWTJ","kind":"open","at":"2026-11-17T22:16:48.979717Z"}
+{"version":1,"task_id":"EWBWTJ","kind":"done","at":"2026-11-17T22:16:49.018472Z","text":"Go contract cases and the full binding suite pass. Readers take a context for each pull, including owned views and Lite3."}
+{"version":1,"task_id":"EYM3IB","kind":"open","at":"2026-11-17T22:16:49.055238Z"}
+{"version":1,"task_id":"EYM3IB","kind":"done","at":"2026-11-17T22:16:49.092496Z","text":"Python contract, cancellation, and thread-safety tests pass. Fresh installs of the ABI3, CPython 3.10, and fallback wheels also pass."}
+{"version":1,"task_id":"YHYKSA","kind":"open","at":"2026-11-17T22:16:49.131378Z"}
+{"version":1,"task_id":"YHYKSA","kind":"done","at":"2026-11-17T22:16:49.169531Z","text":"Shared Node cases pass against native local and real HTTP pools. Native, portable and remote-only checks and TypeScript declarations pass. The native add-on imports the staged ABI 2 library by its versioned name."}
+{"version":1,"task_id":"FLWSV6","kind":"open","at":"2026-11-17T22:16:49.256785Z"}
+{"version":1,"task_id":"FLWSV6","kind":"done","at":"2026-11-17T22:16:49.296761Z","text":"MCP tests pass for feed, follow, fetch, and finite progress, including direct HTTPS and stdio paths."}
+{"version":1,"task_id":"UMHTRO","kind":"open","at":"2026-11-17T22:16:49.336503Z"}
+{"version":1,"task_id":"UMHTRO","kind":"done","at":"2026-11-17T22:16:49.37533Z","text":"CLI conformance and integration tests pass for default starts, explicit history, gap handling, and quiet downstream exit. The packaged Windows CLI passes the PowerShell 7 follow --one test."}
+{"version":1,"task_id":"IKAB6R","kind":"open","at":"2026-11-17T22:16:49.41598Z"}
+{"version":1,"task_id":"IKAB6R","kind":"done","at":"2026-11-17T22:16:49.454084Z","text":"CLI feeds, complete-message pipes, line capture, duplex, and cookbook checks pass with the 2.0 options."}
+{"version":1,"task_id":"XQAFBQ","kind":"open","at":"2026-11-17T22:16:49.492565Z"}
+{"version":1,"task_id":"XQAFBQ","kind":"done","at":"2026-11-17T22:16:49.533413Z","text":"HTTP tests pass for 2.0 routes, JSON and binary endings, cutoff and continuation, and 1.x upgrade errors. Shared Node cases cover HTTP snapshots, cancellation, and retention."}
+{"version":1,"task_id":"RRVSHR","kind":"open","at":"2026-11-17T22:16:49.578647Z"}
+{"version":1,"task_id":"RRVSHR","kind":"done","at":"2026-11-17T22:16:49.623244Z","text":"Moved the design decisions into architecture and the contract. The 2.0 upgrade guide retains the transition table and Brygg example. Retired the proposal."}
+{"version":1,"task_id":"46ZO3V","kind":"open","at":"2026-11-17T22:16:49.661394Z"}
+{"version":1,"task_id":"46ZO3V","kind":"done","at":"2026-11-17T22:16:49.702683Z","text":"Measured local Rust feed and fetch before and after the cutover using alternating release builds. Documented the medians, ranges, and commands. The measured Lite3 and view lanes overlap their prior ranges."}
+{"version":1,"task_id":"AJN6IX","kind":"open","at":"2026-11-17T22:16:49.80977Z"}
+{"version":1,"task_id":"ZJQFWJ","kind":"open","at":"2026-11-17T22:16:49.865649Z"}
+{"version":1,"task_id":"T2QQ6P","kind":"open","at":"2026-11-17T22:16:49.909752Z"}
+{"version":1,"task_id":"AJN6IX","kind":"result","at":"2026-11-17T22:16:53.646341Z","text":"Updated browser, examples, cookbook checks, and Windows workflow. Hosted CI remains."}
+{"version":1,"task_id":"ZJQFWJ","kind":"result","at":"2026-11-17T22:16:53.686031Z","text":"Updated the README, CLI guide, cookbook, serving guide, and recording. Brandon’s review remains."}
+{"version":1,"task_id":"T2QQ6P","kind":"result","at":"2026-11-17T22:16:53.721Z","text":"Both VMs passed before the final Node HTTP fix. Local retest passed. The locked Mac blocks the final VM repack."}
+{"version":1,"task_id":"MBDOON","kind":"created","at":"2026-11-18T17:23:03.511497Z"}
+{"version":1,"task_id":"QT4TZR","kind":"created","at":"2026-11-18T17:23:03.511514Z"}
+{"version":1,"task_id":"WDHKKQ","kind":"created","at":"2026-11-18T17:23:03.511518Z"}
+{"version":1,"task_id":"PU3I2X","kind":"created","at":"2026-11-18T17:23:03.51152Z"}
+{"version":1,"task_id":"PK2WTN","kind":"created","at":"2026-11-18T17:23:03.511523Z"}
+{"version":1,"task_id":"ZIU2PH","kind":"created","at":"2026-11-18T17:23:03.511525Z"}
+{"version":1,"task_id":"TKAGXH","kind":"created","at":"2026-11-18T17:23:03.511528Z"}
+{"version":1,"task_id":"K4YNA7","kind":"created","at":"2026-11-18T17:23:03.51153Z"}
+{"version":1,"task_id":"VJTFS6","kind":"created","at":"2026-11-18T17:23:03.511533Z"}
+{"version":1,"task_id":"HNEFLL","kind":"created","at":"2026-11-18T17:23:03.511536Z"}
+{"version":1,"task_id":"WVTZQO","kind":"created","at":"2026-11-18T17:23:03.51154Z"}
+{"version":1,"task_id":"CB5GMA","kind":"created","at":"2026-11-18T17:23:03.511544Z"}
+{"version":1,"task_id":"K4YNA7","kind":"claim","at":"2026-11-18T17:28:12.901486Z","agent":"codex@mac"}
+{"version":1,"task_id":"QT4TZR","kind":"claim","at":"2026-11-18T17:28:12.938912Z","agent":"codex@mac"}
+{"version":1,"task_id":"WDHKKQ","kind":"claim","at":"2026-11-18T17:28:12.976175Z","agent":"codex@mac"}
+{"version":1,"task_id":"K4YNA7","kind":"done","at":"2026-11-18T18:25:00.382436Z","agent":"codex@mac","text":"Make terminal read errors repeat, support unlimited C waits, and validate C feed arguments. ABI smoke and adversarial checks pass."}
+{"version":1,"task_id":"QT4TZR","kind":"done","at":"2026-11-18T18:25:00.482581Z","agent":"codex@mac","text":"Keep messages collected before a read failure and have MCP pool resources use the same fetch shape. Rust MCP and HTTPS integration tests pass."}
+{"version":1,"task_id":"WDHKKQ","kind":"done","at":"2026-11-18T18:25:00.567111Z","agent":"codex@mac","text":"Send one gap with both sequence fields. Verify dropped datagrams, a stale cursor, CLI resume, and exact UDP fetch."}
+{"version":1,"task_id":"HNEFLL","kind":"claim","at":"2026-11-18T18:25:00.681338Z","agent":"codex@mac"}
+{"version":1,"task_id":"WVTZQO","kind":"claim","at":"2026-11-18T18:25:00.775259Z","agent":"codex@mac"}
+{"version":1,"task_id":"HNEFLL","kind":"done","at":"2026-11-18T18:25:00.896372Z","agent":"codex@mac","text":"Remove duplex timeout, preserve follow --one, and align CLI notices. Complete input accepts RFC 3339 times and positive source sequences."}
+{"version":1,"task_id":"WVTZQO","kind":"done","at":"2026-11-18T18:25:01.116913Z","agent":"codex@mac","text":"Use one HTTP stream transport and server read worker. Verify cutoff continuation, revocation, quiet close, old servers, and browser replacement."}
+{"version":1,"task_id":"VJTFS6","kind":"claim","at":"2026-11-18T18:32:29.9766Z","agent":"codex@mac"}
+{"version":1,"task_id":"VJTFS6","kind":"done","at":"2026-11-18T18:32:30.022718Z","agent":"codex@mac","text":"Remove legacy readers and duplicate C entries. Unify the feed path. Rust and C conformance pass, and recorded local read and feed benchmarks hold."}
+{"version":1,"task_id":"PK2WTN","kind":"claim","at":"2026-11-18T18:32:30.065256Z","agent":"codex@mac"}
+{"version":1,"task_id":"PK2WTN","kind":"done","at":"2026-11-18T18:32:30.108227Z","agent":"codex@mac","text":"Forward messages and views with original tags. Unify Go feed options and Usage errors. Go and Python suites pass."}
+{"version":1,"task_id":"ZIU2PH","kind":"claim","at":"2026-11-18T18:32:30.153069Z","agent":"codex@mac"}
+{"version":1,"task_id":"ZIU2PH","kind":"done","at":"2026-11-18T18:32:30.197253Z","agent":"codex@mac","text":"Use seconds for Python and Node waits, coordinate cancellation, and make Node feeds return promises. Binding suites and type checks pass."}
+{"version":1,"task_id":"TKAGXH","kind":"claim","at":"2026-11-18T18:32:30.238946Z","agent":"codex@mac"}
+{"version":1,"task_id":"TKAGXH","kind":"done","at":"2026-11-18T18:32:30.281976Z","agent":"codex@mac","text":"Load only the ABI 2 library name. Reject a wrong major in Python, Go and Node. Retain the standard-library shim for supported Go versions."}
+{"version":1,"task_id":"PU3I2X","kind":"claim","at":"2026-11-18T18:32:30.326132Z","agent":"codex@mac"}
+{"version":1,"task_id":"PU3I2X","kind":"done","at":"2026-11-18T18:32:30.36747Z","agent":"codex@mac","text":"Open and create HTTPS pools with the same calls as local pools. Shared HTTPS smoke passes in Python, Go and Node."}
+{"version":1,"task_id":"CB5GMA","kind":"claim","at":"2026-11-18T18:32:30.408527Z","agent":"codex@mac"}
+{"version":1,"task_id":"CB5GMA","kind":"done","at":"2026-11-18T18:32:30.449968Z","agent":"codex@mac","text":"Update the CLI and migration guides, changelog, specs and install examples for 2.0. Preserve historical examples in dated material."}
+{"version":1,"task_id":"VJTFS6","kind":"result","at":"2026-11-18T18:38:41.140714Z","text":"32-byte ASCII validation cut a 64 KiB cold view from 5.9 to 2.1 µs. Small-message timing ranges overlap."}
+{"version":1,"task_id":"TKAGXH","kind":"result","at":"2026-11-18T18:38:41.186655Z","text":"Final npm tarballs passed on Debian arm64 and Windows x64. Both load Plasmite by its ABI 2 library name."}
+{"version":1,"task_id":"PTQ6XF","kind":"created","at":"2026-11-19T00:47:14.605215Z"}
+{"version":1,"task_id":"QKS3RF","kind":"created","at":"2026-11-19T00:47:14.605241Z"}
+{"version":1,"task_id":"J4QABG","kind":"created","at":"2026-11-19T00:47:14.605243Z"}
+{"version":1,"task_id":"B3JY54","kind":"created","at":"2026-11-19T00:47:14.605245Z"}
+{"version":1,"task_id":"C6O5VQ","kind":"created","at":"2026-11-19T00:47:14.605247Z"}
+{"version":1,"task_id":"V6WP4D","kind":"created","at":"2026-11-19T00:47:14.605248Z"}
+{"version":1,"task_id":"QKS3RF","kind":"open","at":"2026-11-19T00:48:40.740205Z","text":"Reviewed by Astra 6.2"}
+{"version":1,"task_id":"J4QABG","kind":"open","at":"2026-11-19T00:48:40.77952Z","text":"Reviewed by Astra 6.2"}
+{"version":1,"task_id":"B3JY54","kind":"open","at":"2026-11-19T00:48:40.818132Z","text":"Reviewed by Astra 6.2"}
+{"version":1,"task_id":"C6O5VQ","kind":"open","at":"2026-11-19T00:48:40.856962Z","text":"Reviewed by Astra 6.2"}
+{"version":1,"task_id":"V6WP4D","kind":"open","at":"2026-11-19T00:48:40.895516Z","text":"Reviewed by Astra 6.2"}
+{"version":1,"task_id":"QKS3RF","kind":"claim","at":"2026-11-19T00:48:41.125984Z","agent":"codex"}
+{"version":1,"task_id":"J4QABG","kind":"claim","at":"2026-11-19T00:48:41.16593Z","agent":"codex"}
+{"version":1,"task_id":"B3JY54","kind":"claim","at":"2026-11-19T00:48:41.205419Z","agent":"codex"}
+{"version":1,"task_id":"C6O5VQ","kind":"claim","at":"2026-11-19T00:48:41.245416Z","agent":"codex"}
+{"version":1,"task_id":"J4QABG","kind":"result","at":"2026-11-19T01:01:05.979464Z","agent":"codex","text":"macOS passed crash recovery; 4-reader p95 0.40 ms, quiet CLI wake-ups 152→8 over 8 s.","file":{"path":"docs/performance/language-boundary-results/wakeups/README.md","sha256":"a92c5dc78064f0c0f3a157ede7941f84cc83779221227b8ed57beba7e184fa89","mtime":"2026-11-19T00:57:31.510114962Z","git_commit":"97442cff981bc84d5c37554dbbde6d92cbf6f9df"}}
+{"version":1,"task_id":"J4QABG","kind":"done","at":"2026-11-19T01:01:06.033699Z","agent":"codex","text":"Kept conditional wake-all after matched macOS runs and weak-link verification"}
+{"version":1,"task_id":"C6O5VQ","kind":"result","at":"2026-11-19T01:04:04.872924Z","agent":"codex","text":"Debian ARM64 full suite; x64 and ARMv7 emulated recovery/timeout pass. Physical power still unmeasured.","file":{"path":"docs/performance/language-boundary-results/wakeups/README.md","sha256":"a92c5dc78064f0c0f3a157ede7941f84cc83779221227b8ed57beba7e184fa89","mtime":"2026-11-19T00:57:31.510114962Z","git_commit":"97442cff981bc84d5c37554dbbde6d92cbf6f9df"}}
+{"version":1,"task_id":"C6O5VQ","kind":"done","at":"2026-11-19T01:04:04.920409Z","agent":"codex","text":"Verified all three Linux architectures with native ARM64 and functional x64 and ARMv7 emulation"}
+{"version":1,"task_id":"B3JY54","kind":"result","at":"2026-11-19T01:07:33.237602Z","agent":"codex","text":"Win x64: 4-reader p95 49.96→2.53 ms; saturated drain 11–15% lower. All 279 library tests passed.","file":{"path":"docs/performance/language-boundary-results/wakeups/README.md","sha256":"b4593685051dab13a9403a04bd97a3b678c65707d20043313c408e51d653fb09","mtime":"2026-11-19T01:07:05.407732076Z","git_commit":"97442cff981bc84d5c37554dbbde6d92cbf6f9df"}}
+{"version":1,"task_id":"B3JY54","kind":"done","at":"2026-11-19T01:07:33.282955Z","agent":"codex","text":"Generation events verified in the Windows VM; kept the measured latency/throughput tradeoff"}
+{"version":1,"task_id":"J4QABG","kind":"result","at":"2026-11-19T01:07:57.930827Z","text":"Quieter rerun: +16–17% writes with zero readers; four-reader p95 0.44 ms; peak RSS change \u003c=0.33 MiB.","file":{"path":"docs/performance/language-boundary-results/wakeups/README.md","sha256":"0d4ff498b65032251d60cd681fba1e3612beea50ddae1830d45ce2d6c9da7af3","mtime":"2026-11-19T01:07:57.880271165Z","git_commit":"97442cff981bc84d5c37554dbbde6d92cbf6f9df"}}
+{"version":1,"task_id":"QKS3RF","kind":"result","at":"2026-11-19T01:07:57.999769Z","agent":"codex","text":"Ran matched one/four-reader delivery, idle, cancellation, drain and per-worker peak memory on three OSes.","file":{"path":"docs/performance/language-boundary-results/wakeups/native-follow.py","sha256":"d960bbbfe285b95c7c618ea9ff0a14b7ebb0acc93d914cf66b09fb5a8856ecca","mtime":"2026-11-19T01:01:36.333914332Z","git_commit":"97442cff981bc84d5c37554dbbde6d92cbf6f9df"}}
+{"version":1,"task_id":"QKS3RF","kind":"done","at":"2026-11-19T01:07:58.055805Z","agent":"codex","text":"Portable harness verified on macOS, Debian ARM64 and Windows x64"}
+{"version":1,"task_id":"V6WP4D","kind":"claim","at":"2026-11-19T01:07:58.105505Z","agent":"codex"}
+{"version":1,"task_id":"J4QABG","kind":"result","at":"2026-11-19T01:08:23.532346Z","text":"The x86-64 macOS release crash-recovery test also passed under Rosetta."}
+{"version":1,"task_id":"V6WP4D","kind":"result","at":"2026-11-19T01:08:23.572661Z","agent":"codex","text":"7 matched runs per build across 5 bindings and 3 workloads; Node replay remains responsive, with 44% less peak memory.","file":{"path":"CHANGELOG.md","sha256":"162ec9512dc748e8067b7ed49d7ff79378bb41b8b313bbf9a372c6df28d0363b","mtime":"2026-11-19T01:07:05.40813212Z","git_commit":"97442cff981bc84d5c37554dbbde6d92cbf6f9df"}}
+{"version":1,"task_id":"V6WP4D","kind":"done","at":"2026-11-19T01:08:23.616986Z","agent":"codex","text":"Published matched measurements in the draft notes and native performance report"}
+{"version":1,"task_id":"RUJFQ6","kind":"created","at":"2026-11-20T17:36:03.415454Z"}
+{"version":1,"task_id":"ELZ7QS","kind":"created","at":"2026-11-20T17:36:03.41547Z"}
+{"version":1,"task_id":"IVQ245","kind":"created","at":"2026-11-20T17:36:03.415473Z"}
+{"version":1,"task_id":"CTUS4Y","kind":"created","at":"2026-11-20T17:36:03.415475Z"}
+{"version":1,"task_id":"H4H3MD","kind":"created","at":"2026-11-20T17:36:03.415477Z"}
+{"version":1,"task_id":"KJH6JX","kind":"created","at":"2026-11-20T17:36:03.415479Z"}
+{"version":1,"task_id":"ELZ7QS","kind":"open","at":"2026-11-20T17:36:16.228876Z"}
+{"version":1,"task_id":"IVQ245","kind":"open","at":"2026-11-20T17:36:16.269339Z"}
+{"version":1,"task_id":"CTUS4Y","kind":"open","at":"2026-11-20T17:36:16.307576Z"}
+{"version":1,"task_id":"H4H3MD","kind":"open","at":"2026-11-20T17:36:16.344454Z"}
+{"version":1,"task_id":"KJH6JX","kind":"open","at":"2026-11-20T17:36:16.382619Z"}

@@ -1,54 +1,43 @@
 //! Purpose: Define the canonical serialized data shared by interface adapters.
 //! Exports: Internal message, Lite3 header, pool-info, bounds, metrics, and error wire types.
-//! Role: Single source of truth for stable v0 field names and omission rules.
+//! Role: Single source of truth for stable interface field names and omission rules.
 //! Invariants: This module contains representation only, not transport policy.
 
 use crate::{Error, ErrorKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub(crate) const LITE3_FRAME_HEADER_LEN: usize = 20;
+pub(crate) const LITE3_RECORD_HEADER_LEN: usize = 5;
+pub(crate) const LITE3_MESSAGE_ID_LEN: usize = 16;
+pub(crate) const LITE3_MESSAGE_RECORD: u8 = b'M';
+pub(crate) const LITE3_CONTROL_RECORD: u8 = b'C';
 
-pub(crate) struct Lite3FrameHeader {
-    pub(crate) seq: u64,
-    pub(crate) timestamp_ns: u64,
-    pub(crate) payload_len: u32,
-}
-
-impl Lite3FrameHeader {
-    #[allow(dead_code, reason = "Only the CLI binary writes Lite3 stream headers.")]
-    pub(crate) fn encode(self) -> [u8; LITE3_FRAME_HEADER_LEN] {
-        let mut bytes = [0; LITE3_FRAME_HEADER_LEN];
-        bytes[..8].copy_from_slice(&self.seq.to_be_bytes());
-        bytes[8..16].copy_from_slice(&self.timestamp_ns.to_be_bytes());
-        bytes[16..].copy_from_slice(&self.payload_len.to_be_bytes());
-        bytes
-    }
-
-    pub(crate) fn decode(bytes: [u8; LITE3_FRAME_HEADER_LEN]) -> Self {
-        Self {
-            seq: u64::from_be_bytes(bytes[..8].try_into().expect("sequence field")),
-            timestamp_ns: u64::from_be_bytes(bytes[8..16].try_into().expect("timestamp field")),
-            payload_len: u32::from_be_bytes(bytes[16..].try_into().expect("length field")),
-        }
-    }
+#[allow(
+    dead_code,
+    reason = "The CLI and HTTP server write record headers in the binary crate."
+)]
+pub(crate) fn encode_lite3_record_header(kind: u8, length: u32) -> [u8; LITE3_RECORD_HEADER_LEN] {
+    let mut header = [0; LITE3_RECORD_HEADER_LEN];
+    header[0] = kind;
+    header[1..].copy_from_slice(&length.to_be_bytes());
+    header
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct MessageWire {
+pub(crate) struct MessageWire<D = Value, T = Vec<String>> {
     pub(crate) seq: u64,
     pub(crate) time: String,
-    pub(crate) meta: MessageMetaWire,
-    pub(crate) data: Value,
+    pub(crate) meta: MessageMetaWire<T>,
+    pub(crate) data: D,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub(crate) struct MessageMetaWire {
-    pub(crate) tags: Vec<String>,
+pub(crate) struct MessageMetaWire<T = Vec<String>> {
+    pub(crate) tags: T,
 }
 
-impl MessageWire {
-    pub(crate) fn new(seq: u64, time: String, tags: Vec<String>, data: Value) -> Self {
+impl<D, T> MessageWire<D, T> {
+    pub(crate) fn new(seq: u64, time: String, tags: T, data: D) -> Self {
         Self {
             seq,
             time,
@@ -56,7 +45,9 @@ impl MessageWire {
             data,
         }
     }
+}
 
+impl MessageWire {
     /// Move the existing data tree into the JSON envelope.
     pub(crate) fn into_json(self) -> Value {
         Value::from_iter([
@@ -189,6 +180,8 @@ pub(crate) struct HttpErrorWire {
     path: Option<String>,
     seq: Option<u64>,
     offset: Option<u64>,
+    missing: Option<u64>,
+    next_seq: Option<u64>,
 }
 
 impl HttpErrorWire {
@@ -208,7 +201,12 @@ impl HttpErrorWire {
     }
 
     pub(crate) fn into_error(self, kind: ErrorKind) -> Error {
-        let mut error = Error::new(kind);
+        let mut error = match (kind, self.missing, self.next_seq) {
+            (ErrorKind::RetentionGap, Some(missing), Some(next_seq)) if next_seq > missing => {
+                Error::retention_gap(missing, next_seq)
+            }
+            _ => Error::new(kind),
+        };
         if let Some(message) = self.message {
             error = error.with_message(message);
         }

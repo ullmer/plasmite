@@ -1,5 +1,7 @@
 # Plasmite Remote Protocol v0 (HTTP)
 
+This document preserves the HTTP contract from Plasmite 1.3.0. See the [2.0 contract](../../v2/SPEC.md#http) for current pool routes and streams.
+
 This document defines the normative remote protocol contract for v0.
 It captures stable wire-level compatibility guarantees only.
 
@@ -166,11 +168,7 @@ It captures stable wire-level compatibility guarantees only.
 ### Server Limits
 
 - Servers may enforce max request body size (`413`).
-- Tail timeout_ms is an upper bound. Servers use the shorter of the requested
-  timeout and configured maximum, or the maximum when omitted. One absolute
-  lifetime covers admission, scheduling, storage reads and backpressure.
-  This replaces the 1.x rejection above the maximum and awaits a major release;
-  see the [upgrade guide](../../../docs/record/upgrading-next-major.md#http-tail-durations-are-upper-bounds).
+- Servers may enforce max tail timeout (`400` when exceeded).
 - Servers may cap concurrent tails (`423`).
 - Body/size limits should be applied consistently to JSON and Lite3 append paths.
 - The server bounds HTTPS connections before authentication and expires

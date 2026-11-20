@@ -19,6 +19,7 @@ fn main() {
     let include_dir = lite3_dir.join("include");
     let lib_dir = lite3_dir.join("lib");
     println!("cargo:rerun-if-changed=c/lite3_shim.c");
+    println!("cargo:rerun-if-changed=c/lite3_builder.c");
     println!("cargo:rerun-if-changed=c/lite3_shim.h");
     println!("cargo:rerun-if-changed=vendor/lite3/include/lite3.h");
     println!("cargo:rerun-if-changed=vendor/lite3/include/lite3_context_api.h");
@@ -31,9 +32,27 @@ fn main() {
     println!("cargo:rerun-if-changed=vendor/lite3/lib/nibble_base64/base64.c");
 
     if target.contains("apple-darwin") {
-        println!("cargo:rustc-cdylib-link-arg=-Wl,-install_name,@rpath/libplasmite.dylib");
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-install_name,@rpath/libplasmite.2.dylib");
     } else if !target.contains("windows-msvc") {
-        println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libplasmite.so");
+        println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libplasmite.so.2");
+    }
+
+    if target.contains("apple-darwin") {
+        println!("cargo:rerun-if-changed=c/notify_shim.c");
+        // cc otherwise uses the SDK's minimum, which can compile away the
+        // availability checks even while Rust targets an older macOS host.
+        let deployment = env::var("MACOSX_DEPLOYMENT_TARGET").unwrap_or_else(|_| {
+            if target.starts_with("aarch64") {
+                "11.0".into()
+            } else {
+                "10.12".into()
+            }
+        });
+        cc::Build::new()
+            .file(manifest_dir.join("c").join("notify_shim.c"))
+            .flag(format!("-mmacosx-version-min={deployment}"))
+            .flag_if_supported("-std=gnu11")
+            .compile("plasmite_notify");
     }
 
     let mut build = cc::Build::new();
@@ -47,7 +66,8 @@ fn main() {
         .file(lite3_dir.join("src").join("debug.c"))
         .file(lite3_dir.join("lib").join("yyjson").join("yyjson.c"))
         .file(lite3_dir.join("lib").join("nibble_base64").join("base64.c"))
-        .file(manifest_dir.join("c").join("lite3_shim.c"));
+        .file(manifest_dir.join("c").join("lite3_shim.c"))
+        .file(manifest_dir.join("c").join("lite3_builder.c"));
 
     configure_lite3_compiler(&mut build, &target);
     build.compile("lite3");

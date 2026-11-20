@@ -21,7 +21,7 @@ pub enum CursorResult {
 #[derive(Debug, PartialEq)]
 pub struct FrameRef {
     pub seq: u64,
-    pub timestamp_ns: u64,
+    pub time: u64,
     pub flags: u32,
     pub payload: Vec<u8>,
 }
@@ -30,7 +30,7 @@ pub struct FrameRef {
 // crosses the public boundary, rather than every frame skipped by a scan.
 pub(crate) struct FrameView<'a> {
     pub seq: u64,
-    pub timestamp_ns: u64,
+    pub time: u64,
     pub flags: u32,
     pub payload: &'a [u8],
 }
@@ -39,14 +39,14 @@ impl FrameView<'_> {
     pub(crate) fn into_owned(self) -> FrameRef {
         FrameRef {
             seq: self.seq,
-            timestamp_ns: self.timestamp_ns,
+            time: self.time,
             flags: self.flags,
             payload: self.payload.to_vec(),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Cursor {
     next_off: usize,
     last_seq: u64,
@@ -71,22 +71,137 @@ impl Cursor {
         self.observed_header = None;
     }
 
+    pub(crate) fn observed_generation(&self) -> u64 {
+        self.observed_header.map_or(0, |header| header.newest_seq)
+    }
+
     pub fn next(&mut self, pool: &Pool) -> Result<CursorResult, Error> {
         let _lock = pool.read_lock()?;
         self.next_locked(pool)
     }
 
+    pub(crate) fn next_checked(
+        &mut self,
+        pool: &Pool,
+        expected: Option<u64>,
+    ) -> Result<CursorResult, Error> {
+        let _lock = pool.read_lock()?;
+        self.next_owned_locked(pool, expected)
+    }
+
     // The caller retains the shared pool lock through the payload copy.
     pub(crate) fn next_locked(&mut self, pool: &Pool) -> Result<CursorResult, Error> {
+        self.next_owned_locked(pool, None)
+    }
+
+    pub(crate) fn next_owned_locked(
+        &mut self,
+        pool: &Pool,
+        expected: Option<u64>,
+    ) -> Result<CursorResult, Error> {
         let header = pool.header_locked()?;
+        self.seek_expected_locked(pool, header, expected)?;
+        loop {
+            match self.next_view_at_header(pool, header, expected)? {
+                CursorViewResult::Message(frame) => {
+                    if expected.is_none_or(|expected| frame.seq >= expected) {
+                        return Ok(CursorResult::Message(frame.into_owned()));
+                    }
+                }
+                CursorViewResult::WouldBlock => return Ok(CursorResult::WouldBlock),
+                CursorViewResult::FellBehind => return Ok(CursorResult::FellBehind),
+            }
+        }
+    }
+
+    pub(crate) fn next_locked_bounded(
+        &mut self,
+        pool: &Pool,
+        bytes: usize,
+        minimum_seq: Option<u64>,
+    ) -> Result<CursorResult, Error> {
+        if bytes == usize::MAX && minimum_seq.is_none() {
+            return self.next_locked(pool);
+        }
+        let header = pool.header_locked()?;
+        self.seek_expected_locked(pool, header, minimum_seq)?;
+        loop {
+            let checkpoint = self.clone();
+            match self.next_view_at_header(pool, header, minimum_seq)? {
+                CursorViewResult::Message(frame) => {
+                    // Older records never cross this stream's requested boundary.
+                    // Check their frame headers, then skip without copying payloads.
+                    if minimum_seq.is_some_and(|minimum| frame.seq < minimum) {
+                        continue;
+                    }
+                    if frame.payload.len() > bytes {
+                        let required = frame.payload.len();
+                        *self = checkpoint;
+                        return Err(Error::new(ErrorKind::Usage).with_message(format!(
+                            "next frame needs {required} encoded bytes, above batch budget {bytes}"
+                        )));
+                    }
+                    return Ok(CursorResult::Message(frame.into_owned()));
+                }
+                CursorViewResult::WouldBlock => return Ok(CursorResult::WouldBlock),
+                CursorViewResult::FellBehind => return Ok(CursorResult::FellBehind),
+            }
+        }
+    }
+
+    /// Position the cursor at the first matching frame while the caller holds the pool lock.
+    pub(crate) fn seek_time_locked(
+        &mut self,
+        pool: &Pool,
+        header: PoolHeader,
+        time_ns: u64,
+    ) -> Result<Option<u64>, Error> {
+        if let Some((offset, frame)) =
+            pool.scan_history_locked(header, None, |frame| frame.time >= time_ns)?
+        {
+            self.seek_to(offset);
+            return Ok(Some(frame.seq));
+        }
+        Ok(None)
+    }
+
+    fn seek_expected_locked(
+        &mut self,
+        pool: &Pool,
+        header: PoolHeader,
+        expected: Option<u64>,
+    ) -> Result<(), Error> {
+        if !self.started
+            && let Some(seq) = expected
+            && seq > header.oldest_seq
+            && seq <= header.newest_seq
+            && let Some((offset, _)) =
+                pool.scan_history_locked(header, None, |frame| frame.seq >= seq)?
+        {
+            self.seek_to(offset);
+        }
+        Ok(())
+    }
+
+    fn next_view_at_header<'p>(
+        &mut self,
+        pool: &'p Pool,
+        header: PoolHeader,
+        expected: Option<u64>,
+    ) -> Result<CursorViewResult<'p>, Error> {
+        if let Some(expected) = expected
+            && expected < header.oldest_seq
+        {
+            return Err(Error::retention_gap(expected, header.oldest_seq));
+        }
         let position_may_be_stale = self.observed_header != Some(header);
         self.observed_header = Some(header);
         if header.oldest_seq == 0 {
-            return Ok(CursorResult::WouldBlock);
+            return Ok(CursorViewResult::WouldBlock);
         }
 
         if self.last_seq != 0 && self.last_seq >= header.newest_seq {
-            return Ok(CursorResult::WouldBlock);
+            return Ok(CursorViewResult::WouldBlock);
         }
 
         let ring_size = header.ring_size as usize;
@@ -102,7 +217,7 @@ impl Cursor {
         }
         let is_full = head == tail && header.oldest_seq != 0;
         if !is_full && self.next_off == head {
-            return Ok(CursorResult::WouldBlock);
+            return Ok(CursorViewResult::WouldBlock);
         }
 
         if self.next_off >= ring_size
@@ -110,7 +225,7 @@ impl Cursor {
         {
             self.next_off = tail;
             self.last_seq = 0;
-            return Ok(CursorResult::FellBehind);
+            return Ok(CursorViewResult::FellBehind);
         }
 
         loop {
@@ -134,7 +249,7 @@ impl Cursor {
                     }
                     self.next_off = tail;
                     self.last_seq = 0;
-                    return Ok(CursorResult::FellBehind);
+                    return Ok(CursorViewResult::FellBehind);
                 }
                 ReadResult::Message { frame, next_off } => {
                     if frame.seq < header.oldest_seq
@@ -144,17 +259,23 @@ impl Cursor {
                         if frame.seq < header.oldest_seq && self.next_off != tail {
                             self.next_off = tail;
                             self.last_seq = 0;
-                            return Ok(CursorResult::FellBehind);
+                            return Ok(CursorViewResult::FellBehind);
                         }
                         return Err(pool.malformed_frame_error(self.next_off));
                     }
                     self.next_off = next_off;
                     self.last_seq = frame.seq;
-                    return Ok(CursorResult::Message(frame.into_owned()));
+                    return Ok(CursorViewResult::Message(frame));
                 }
             }
         }
     }
+}
+
+enum CursorViewResult<'a> {
+    Message(FrameView<'a>),
+    WouldBlock,
+    FellBehind,
 }
 
 impl Default for Cursor {
@@ -231,7 +352,7 @@ pub(crate) fn read_frame_at<'a>(
     Ok(ReadResult::Message {
         frame: FrameView {
             seq: h1.seq,
-            timestamp_ns: h1.timestamp_ns,
+            time: h1.timestamp_ns,
             flags: h1.flags,
             payload,
         },

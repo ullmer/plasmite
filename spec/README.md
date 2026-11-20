@@ -1,25 +1,32 @@
 # Specs
 
-Normative contracts are versioned under `spec/`.
+Specs hold the contracts that users and other programs rely on. The 2.0 entries describe the current source. The 1.x entries preserve contracts from published releases.
 
-- CLI contract (1.x; historical path): `spec/v0/SPEC.md`
-- UDP input contract (v0): `spec/udp/v0/SPEC.md`
-- [UDP transport v1](udp/v1/SPEC.md): read when changing native UDP send/follow, subscription controls, or delivery events.
-- Public API contract (1.x; historical path): `spec/api/v0/SPEC.md`
-- Remote protocol contract (v0): `spec/remote/v0/SPEC.md`
-- MCP contract (2025-11-25): `spec/mcp/2025-11-25/SPEC.md`
+## Plasmite 2.0
 
-## Distillation Rule
+- [2.0 contract](v2/SPEC.md): read before changing the CLI, libraries, HTTP, UDP or Model Context Protocol (MCP) behavior.
+- [UDP transport v1](udp/v1/SPEC.md): read when changing UDP feed and follow, subscription controls or delivery events. 2.0 UDP follows this spec.
+- [UDP input v0](udp/v0/SPEC.md): read when changing the UDP datagram format or listener. 2.0 UDP keeps this wire format.
+- [MCP contract](mcp/2025-11-25/SPEC.md): historical 1.x wire contract. See the 2.0 contract for current lifecycle, transport, tool and resource behavior.
 
-Specs capture only externally relied-on compatibility guarantees:
+## Plasmite 1.x
 
-- Versioning and additive/breaking policy.
-- Stable surface names and endpoint/command shapes.
-- Data, ordering, and error invariants.
-- Explicit non-contract surfaces.
+- [CLI contract](v0/SPEC.md): read when checking how 1.x commands behaved.
+- [Public API contract](api/v0/SPEC.md): read when checking 1.x library behavior.
+- [HTTP remote protocol](remote/v0/SPEC.md): read when checking the 1.x HTTP routes. The 2.0 contract still uses its access rules.
+- [UDP transport in 1.3.0](https://github.com/sandover/plasmite/blob/v1.3.0/spec/udp/v1/SPEC.md): read when checking 1.x delivery and skip behavior.
 
-Specs intentionally avoid code-level mirroring:
+## What belongs in a spec
 
-- Language-specific method/function signatures.
-- Exhaustive option-by-option docs unless contract-critical.
-- Implementation notes, internal architecture details, and long examples.
+Specs capture guarantees that callers outside the codebase rely on:
+
+- Versioning and the policy for additive and breaking changes.
+- Stable names and the shapes of commands, endpoints and calls, including tables that map one operation to its name in each language.
+- Data, ordering and error invariants.
+- Surfaces that sit outside the contract.
+
+Specs leave out:
+
+- Full language-level signatures; code-level docs hold those.
+- Option-by-option reference, unless the contract depends on it.
+- Implementation notes, internal architecture and long examples.

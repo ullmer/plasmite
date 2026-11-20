@@ -1,248 +1,151 @@
 # plasmite
 
-Persistent, bounded JSON message streams backed by plain files. Local use
-needs no daemon or broker.
+Plasmite is a pipe that remembers. Programs send and receive JSON messages through a pool: a bounded ring buffer in one file on disk. The pool keeps recent messages after writers exit, and when it fills, new messages overwrite the oldest ones. Local pools need no server or broker.
 
-Plasmite gives you disk-backed ring buffers ("pools") that multiple processes
-can read and write concurrently. Use them for IPC, recent event history,
-and process output. Old messages disappear when the ring fills; Plasmite
-does not acknowledge work or retain it until a consumer finishes.
+Three verbs cover almost everything:
 
-- Owned message snapshots from memory-mapped pool files
-- Crash-safe writes with configurable durability
-- Bounded disk usage (ring buffer — old messages overwritten when full)
-- Structured JSON messages with sequence numbers, timestamps, and tags
+- `feed` writes a message.
+- `follow` waits for new messages.
+- `fetch` reads what the pool holds and stops.
+
+This crate is the Rust library and the `plasmite` CLI. Python, Node, Go and C libraries share the same model.
 
 ## Quick start
 
 ```rust
-use plasmite::api::{
-    Durability, LocalClient, PoolApiExt, PoolOptions, PoolRef, TailOptions,
-};
+use plasmite::api::{Feed, LocalClient, PoolRef, Read};
 use serde_json::json;
 
-// Create a client (pools stored in ~/.plasmite/pools/ by default)
-let client = LocalClient::new();
+fn main() -> Result<(), plasmite::api::Error> {
+    let client = LocalClient::new();
+    let mut pool = client.open_pool(&PoolRef::name("builds"), true)?;
+    pool.feed(&json!({"step": "test", "status": "ok"}), Feed::new().tags(["ci"]))?;
 
-// Create a 1 MB pool
-let pool_ref = PoolRef::name("events");
-client.create_pool(&pool_ref, PoolOptions::new(1024 * 1024))?;
-let mut pool = client.open_pool(&pool_ref)?;
-
-// Append messages with tags
-let msg = pool.append_json_now(
-    &json!({"kind": "signup", "user": "alice"}),
-    &["user-event".into()],
-    Durability::Fast,
-)?;
-println!("seq={} time={}", msg.seq, msg.time);
-
-// Read back by sequence number
-let fetched = pool.get_message(1)?;
-assert_eq!(fetched.data["user"], "alice");
-
-// Read back this message through the streaming API
-let mut tail = pool.tail(TailOptions {
-    since_seq: Some(msg.seq),
-    max_messages: Some(1),
-    tags: vec!["user-event".into()],
-    ..TailOptions::default()
-});
-while let Some(message) = tail.next_message()? {
-    println!("{}: {}", message.seq, message.data);
-}
-```
-
-## Core concepts
-
-A **pool** is a single `.plasmite` file containing a ring buffer. Messages
-are appended to the head and the oldest messages are silently overwritten when
-the pool is full.
-
-Every message carries:
-- **seq** — monotonically increasing sequence number
-- **time** — nanosecond-precision UTC timestamp
-- **tags** — optional string labels for filtering
-- **data** — your JSON payload
-
-Multiple processes can write to the same pool concurrently (serialized via OS
-file locks). Multiple processes read concurrently using shared file locks
-while copying each message into an owned snapshot.
-
-## API overview
-
-### Client and pool lifecycle
-
-```rust
-use plasmite::api::{LocalClient, PoolRef, PoolOptions};
-
-let client = LocalClient::new();
-// Or with a custom directory:
-let client = LocalClient::new().with_pool_dir("/tmp/my-pools");
-
-// Create
-client.create_pool(&PoolRef::name("logs"), PoolOptions::new(64 * 1024 * 1024))?;
-
-// Open (returns a mutable Pool handle)
-let mut pool = client.open_pool(&PoolRef::name("logs"))?;
-
-// Inspect
-let info = client.pool_info(&PoolRef::name("logs"))?;
-println!("bounds: {:?}", info.bounds);
-
-// List all pools
-let pools = client.list_pools()?;
-
-// Delete
-client.delete_pool(&PoolRef::name("logs"))?;
-```
-
-Pool references resolve names to `~/.plasmite/pools/{name}.plasmite`, or
-you can use `PoolRef::path(...)` for an absolute path.
-
-### Writing messages
-
-The `PoolApiExt` trait extends `Pool` with the message API:
-
-```rust
-use plasmite::api::{PoolApiExt, Durability, AppendOptions};
-use serde_json::json;
-
-// Simple append (generates timestamp for you)
-let msg = pool.append_json_now(
-    &json!({"temp": 23.5}),
-    &["sensor".into()],
-    Durability::Fast,
-)?;
-
-// With explicit options (custom timestamp)
-let msg = pool.append_json(
-    &json!({"temp": 24.1}),
-    &["sensor".into()],
-    AppendOptions::new(1_700_000_000_000_000_000, Durability::Flush),
-)?;
-```
-
-**Durability:**
-- `Durability::Fast` — buffered writes, higher throughput
-- `Durability::Flush` — fsync after write, crash-safe
-
-### Reading messages
-
-```rust
-use plasmite::api::PoolApiExt;
-
-// By sequence number
-let msg = pool.get_message(42)?;
-println!("{}: {} {:?}", msg.seq, msg.data, msg.meta.tags);
-```
-
-### Tailing (streaming)
-
-```rust
-use plasmite::api::{PoolApiExt, TailOptions};
-use std::time::Duration;
-
-let mut tail = pool.tail(TailOptions {
-    since_seq: Some(100),                  // start at seq 100 (inclusive)
-    max_messages: Some(50),                // stop after 50
-    timeout: Some(Duration::from_secs(5)), // stop after 5s from the start
-    tags: vec!["important".into()],        // filter by tag
-    ..TailOptions::default()
-});
-
-while let Some(msg) = tail.next_message()? {
-    println!("{}", msg.data);
-}
-```
-
-### Playback timing
-
-SDK callers read ordinary tails and control their own scheduling. For command-line
-playback, use `pls follow POOL --since 1h --replay 10`. See the
-[next major upgrade guide](docs/record/upgrading-next-major.md#sdk-applications-control-playback-timing)
-for Rust and binding migration examples.
-
-### Remote pools
-
-Use the server's credential-free loopback listener on the same machine:
-
-```rust
-use plasmite::api::{RemoteClient, PoolRef, Durability};
-use serde_json::json;
-
-let client = RemoteClient::new("http://127.0.0.1:9700")?;
-
-let pool = client.open_pool(&PoolRef::name("events"))?;
-let msg = pool.append_json_now(
-    &json!({"kind": "deploy"}),
-    &["ops".into()],
-    Durability::Fast,
-)?;
-
-// Tail remote messages
-let mut tail = pool.tail(Default::default())?;
-while let Some(msg) = tail.next_message()? {
-    println!("{}", msg.data);
-}
-tail.cancel();
-```
-
-For HTTPS sharing, run `plasmite access connect SERVER_URL` first, then
-construct `RemoteClient::new(SERVER_URL)`. An application can instead supply
-an in-memory access key with `RemoteClient::with_access_key(SERVER_URL, key)`.
-See the [1.0 upgrade guide](https://github.com/sandover/plasmite/blob/main/docs/record/upgrading-1.0.md) for removed builders
-and configuration changes.
-
-### Error handling
-
-Errors carry structured context:
-
-```rust
-use plasmite::api::ErrorKind;
-
-match pool.get_message(9999) {
-    Ok(msg) => println!("{}", msg.data),
-    Err(e) if e.kind() == ErrorKind::NotFound => {
-        eprintln!("no message at seq 9999");
+    let mut history = pool.fetch(Read::last(10).tags(["ci"]))?;
+    while let Some(message) = history.next_message()? {
+        println!("{} {}", message.seq, message.data);
     }
-    Err(e) => {
-        // e.hint(), e.path(), e.seq(), e.offset() available
-        return Err(e);
-    }
+    Ok(())
 }
 ```
 
-Error kinds: `Internal`, `Usage`, `NotFound`, `AlreadyExists`, `Busy`,
-`Permission`, `Corrupt`, `Io`, `RetentionGap`.
+`LocalClient::new()` keeps pools in `~/.plasmite/pools`; `with_pool_dir` picks another directory. Passing `true` to `open_pool` creates a missing pool at the default size of 1 MiB.
 
-Set `TailOptions::gap_policy` to `GapPolicy::Error` to stop a tail before
-delivering a message after lost history. Its `RetentionGap` error identifies the first missing sequence.
-Persist the next sequence to read and choose how to recover before restarting.
+Each `Message` has a `seq` that identifies it, a `time` in Unix nanoseconds, `meta.tags`, and your JSON object in `data`.
 
-### Pool validation
+## Choose where a read starts
+
+`follow` and `fetch` take the same `Read` options:
+
+- `Read::new()`: `follow` waits for the next new message; `fetch` reads everything the pool holds.
+- `Read::since(Since::Oldest)`, `Since::Seq(n)`, `Since::Ago(duration)`, or `Since::At(unix_nanos)`: start at that position, inclusive.
+- `Read::last(n)`: start `n` messages back. It counts messages before the tag filter.
+- `.tags(["ci"])`: keep only messages that carry every listed tag.
+- `.cancel(flag)`: stop a blocking `follow` when the caller sets an `Arc<AtomicBool>` to true. Drop the reader when you finish using it.
+
+`fetch` stops at the newest message present when it opens. A feed with default options returns after committing the message to the pool. Use `Feed::new().durability(Durability::Flush)` to flush the write before returning.
+
+## Resume after a restart
+
+Save the `seq` of each message after you handle it, and start the next run from the one after it. If the pool has overwritten messages you never read, you get a `RetentionGap` error that names the first missing sequence and the `next_seq` where you can continue:
 
 ```rust
-let report = client.validate_pool(&PoolRef::name("events"))?;
-match report.status {
-    plasmite::api::ValidationStatus::Ok => println!("pool healthy"),
-    plasmite::api::ValidationStatus::Corrupt => {
-        for issue in &report.issues {
-            eprintln!("{}: {}", issue.code, issue.message);
+use plasmite::api::{Error, ErrorKind, LocalClient, PoolRef, Read, Since};
+
+fn main() -> Result<(), Error> {
+    let pool = LocalClient::new().open_pool(&PoolRef::name("builds"), true)?;
+    let mut next = 1; // the seq after the last one you handled, from your own storage
+    loop {
+        let result = pool.follow(Read::since(Since::Seq(next))).and_then(|mut reader| {
+            while let Some(message) = reader.next_message()? {
+                println!("{} {}", message.seq, message.data);
+                next = message.seq + 1; // save this after handling the message
+            }
+            Ok(())
+        });
+        match result {
+            Err(err) if err.kind() == ErrorKind::RetentionGap => {
+                eprintln!("missed messages from {:?}", err.missing());
+                next = err.next_seq().unwrap();
+            }
+            other => return other,
         }
     }
 }
 ```
 
+## Manage pools
+
+```rust
+use plasmite::api::{LocalClient, PoolOptions, PoolRef};
+
+fn main() -> Result<(), plasmite::api::Error> {
+    let client = LocalClient::new();
+    let sensors = PoolRef::name("sensors");
+    let pool = client.create_pool(&sensors, PoolOptions::new(64 * 1024 * 1024))?;
+    println!("bounds: {:?}", pool.info()?.bounds);
+    println!("{} pools", client.list_pools()?.len());
+    drop(pool);
+    client.delete_pool(&sensors)?;
+    Ok(())
+}
+```
+
+`PoolRef::path` names a pool file directly. `client.validate_pool(&reference)` checks a pool for corruption.
+
+## Remote pools
+
+`RemoteClient` reads and writes pools that `plasmite serve` shares, with the same `Feed` and `Read` options:
+
+```rust
+use plasmite::api::{Feed, PoolRef, Read, RemoteClient};
+use serde_json::json;
+
+fn main() -> Result<(), plasmite::api::Error> {
+    let client = RemoteClient::new("https://pools.example.net:9743")?;
+    let pool = client.open_pool(&PoolRef::name("sensors"), true)?;
+    pool.feed(&json!({"temp_c": 21.4}), Feed::new())?;
+    let mut history = pool.fetch(Read::last(10))?;
+    while let Some(message) = history.next_message()? {
+        println!("{}", message.data);
+    }
+    Ok(())
+}
+```
+
+`RemoteClient::new` uses the access key that `plasmite access connect` saved for that server; `RemoteClient::with_access_key(url, key)` takes one directly. The [serving guide](https://github.com/sandover/plasmite/blob/main/docs/record/serving.md) covers server setup. `UdpClient` sends and follows over UDP on a trusted network.
+
+## Read without decoding to JSON
+
+Pools store messages in [Lite3](https://github.com/fastserial/lite3), a binary JSON encoding. `follow_view` and `fetch_view` return `MessageView` values that read fields straight from the stored bytes:
+
+```rust
+use plasmite::api::{LocalClient, PoolRef, Read};
+
+fn main() -> Result<(), plasmite::api::Error> {
+    let pool = LocalClient::new().open_pool(&PoolRef::name("sensors"), true)?;
+    let mut history = pool.fetch_view(Read::last(10))?;
+    while let Some(view) = history.next_view()? {
+        if let Some(temp) = view.data().get("temp_c")? {
+            println!("{}", temp.decode::<f64>()?);
+        }
+    }
+    Ok(())
+}
+```
+
+Each view owns an immutable copy of one message, so it stays valid after the reader or pool closes, and later writes can't change it. Forward a view to another pool with `feed_view` without re-encoding it. `follow_lite3` and `fetch_lite3` return the raw encoded frames, and `feed_lite3_receipt` stores encoded bytes and returns only the new `seq` and `time`. The [specification](https://github.com/sandover/plasmite/blob/main/spec/v2/SPEC.md) gives the exact ownership and transport rules.
+
 ## CLI
 
-`cargo install plasmite` also installs the `plasmite` (and `pls`) CLI.
-Local pools need no server. `plasmite serve SERVER` shares them over HTTPS;
-`plasmite serve install SERVER` arranges boot startup on macOS, Linux with
-systemd, or Windows.
-See the [full README](https://github.com/sandover/plasmite) for CLI docs,
-cookbook, and language bindings ([Node](https://www.npmjs.com/package/plasmite),
-[Python](https://pypi.org/project/plasmite/), [Go](https://github.com/sandover/plasmite/tree/main/bindings/go)).
+`cargo install plasmite` installs the `plasmite` CLI and its short alias `pls`:
+
+```bash
+plasmite follow builds                                   # terminal 1: waits
+plasmite feed builds '{"step": "test", "status": "ok"}'  # terminal 2
+```
+
+The [README](https://github.com/sandover/plasmite#readme) covers the CLI, sharing pools across machines, and other install channels. The [Cookbook](https://github.com/sandover/plasmite/blob/main/docs/cookbook.md) has task-by-task recipes.
 
 ## License
 

@@ -19,7 +19,7 @@ class WheelPlatformTests(unittest.TestCase):
     def tag(self, library, cli, original='macosx_11_0_universal2'):
         with tempfile.TemporaryDirectory() as directory:
             native = Path(directory)
-            (native / 'libplasmite.dylib').write_bytes(library)
+            (native / 'libplasmite.2.dylib').write_bytes(library)
             (native / 'plasmite').write_bytes(cli)
             return macos_platform_tag(native, original)
 
@@ -47,6 +47,19 @@ class WheelPlatformTests(unittest.TestCase):
             with self.subTest(minimum=minimum):
                 artifact = binary(arch, minimum)
                 self.assertEqual(self.tag(artifact, artifact, 'macosx_10_12_universal2'), expected)
+
+    def test_extension_minimum_contributes_to_wheel_floor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            native = root / "_native"
+            native.mkdir()
+            (native / "libplasmite.2.dylib").write_bytes(binary("arm64", (11, 0, 0)))
+            (native / "plasmite").write_bytes(binary("arm64", (11, 0, 0)))
+            (root / "_views_native.abi3.so").write_bytes(binary("arm64", (13, 0, 0)))
+            self.assertEqual(
+                macos_platform_tag(native, "macosx_11_0_arm64", root),
+                "macosx_13_0_arm64",
+            )
 
     def test_missing_optional_bundle_uses_process_architecture(self):
         with tempfile.TemporaryDirectory() as directory, patch('wheel_platform.platform.machine', return_value='x86_64'):

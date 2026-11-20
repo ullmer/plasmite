@@ -3,7 +3,7 @@
 use crate::udp_wire as wire;
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use plasmite::api::{Cursor, CursorResult, FrameRef, Pool, PoolPathGuard};
-use plasmite::api::{Durability, Error, ErrorKind, LocalClient, PoolApiExt, PoolRef};
+use plasmite::api::{Error, ErrorKind, Feed, LocalClient, PoolRef};
 use ring::hmac;
 use serde::Deserialize;
 use serde_json::Value;
@@ -84,15 +84,15 @@ fn append(client: &LocalClient, mut packet: Vec<u8>) -> Result<(), Error> {
         let body_len = body.len();
         packet.copy_within(separator + 1.., 0);
         packet.truncate(body_len);
-        let mut pool = client.open_pool(&PoolRef::name(name))?;
-        pool.append_lite3_now(&packet, Durability::Fast)?;
+        let mut pool = client.open_pool(&PoolRef::name(name), false)?;
+        pool.feed_lite3_receipt(&packet, Feed::default())?;
     } else {
         let input: JsonInput = serde_json::from_slice(body).map_err(|_| invalid())?;
         if !input.data.is_object() {
             return Err(invalid());
         }
-        let mut pool = client.open_pool(&PoolRef::name(name))?;
-        pool.append_json_now(&input.data, &input.tags, Durability::Fast)?;
+        let mut pool = client.open_pool(&PoolRef::name(name), false)?;
+        pool.feed(&input.data, Feed::default().tags(input.tags))?;
     }
     Ok(())
 }
@@ -117,13 +117,16 @@ impl Subscription {
 struct Completed {
     sub: Arc<Subscription>,
     pool: PoolPathGuard,
-    progress: wire::Progress,
+    ending: Result<wire::Progress, Error>,
 }
 
 impl Completed {
     fn reply(&self, socket: &std::net::UdpSocket, key: Key) -> Result<(), Error> {
         self.pool.check_current_path()?;
-        reply(socket, key, wire::PROGRESS, &self.progress);
+        match &self.ending {
+            Ok(progress) => reply(socket, key, wire::PROGRESS, progress),
+            Err(error) => failure(socket, key, error),
+        }
         Ok(())
     }
 }
@@ -205,6 +208,8 @@ fn failure(socket: &std::net::UdpSocket, key: Key, error: &Error) {
         &wire::Failure {
             kind: format!("{:?}", error.kind()),
             message: error.message().unwrap_or("UDP stream failed").to_string(),
+            missing: error.missing(),
+            next_seq: error.next_seq(),
         },
     );
 }
@@ -221,6 +226,7 @@ fn select_start(
         .ok_or_else(|| Error::new(ErrorKind::Corrupt).with_message("pool sequence exhausted"))?;
     let mut cursor = Cursor::new();
     match start {
+        wire::Start::New if !sub.selection.live => Ok((oldest, upper, cursor, None)),
         wire::Start::New => {
             cursor.seek_to(header.head_off as usize);
             Ok((after, upper, cursor, None))
@@ -232,12 +238,21 @@ fn select_start(
             Ok((after.saturating_sub(*n).max(oldest), upper, cursor, None))
         }
         wire::Start::Sequence(seq) => {
-            if *seq == 0 {
-                return Err(Error::new(ErrorKind::Usage).with_message("sequence must be positive"));
+            if *seq > after {
+                return Err(Error::new(ErrorKind::Usage)
+                    .with_message("since is after the next unwritten message"));
             }
-            Ok((*seq, upper, cursor, None))
+            if *seq != 0 && *seq < oldest {
+                return Err(Error::retention_gap(*seq, oldest));
+            }
+            Ok((if *seq == 0 { oldest } else { *seq }, upper, cursor, None))
         }
-        wire::Start::Since(timestamp) => {
+        wire::Start::Since(_) | wire::Start::Ago(_) => {
+            let timestamp = match start {
+                wire::Start::Since(time) => *time,
+                wire::Start::Ago(nanos) => crate::cli::support::now_ns()?.saturating_sub(*nanos),
+                _ => unreachable!(),
+            };
             let deadline = Instant::now() + Duration::from_millis(wire::STARTUP_MS);
             loop {
                 if !sub.active() || Instant::now() >= deadline {
@@ -248,7 +263,7 @@ fn select_start(
                 pool.check_current_path()?;
                 match cursor.next(pool)? {
                     CursorResult::Message(frame) if frame.seq <= upper => {
-                        if frame.timestamp_ns >= *timestamp {
+                        if frame.time >= timestamp {
                             return Ok((frame.seq, upper, cursor, Some(frame)));
                         }
                     }
@@ -256,8 +271,8 @@ fn select_start(
                     // Keep that frame for live delivery instead of consuming it.
                     CursorResult::Message(frame) => return Ok((after, upper, cursor, Some(frame))),
                     CursorResult::FellBehind => {
-                        return Err(Error::new(ErrorKind::RetentionGap)
-                            .with_message("selected UDP history is no longer retained"));
+                        let current = pool.header_from_mmap()?;
+                        cursor.seek_to(current.tail_off as usize);
                     }
                     _ => return Ok((after, upper, cursor, None)),
                 }
@@ -307,37 +322,42 @@ fn follow_pool(
     key: Key,
     sub: &Arc<Subscription>,
 ) -> Result<Option<Completed>, Error> {
-    let pool = client.open_pool(&PoolRef::name(&sub.selection.pool))?;
-    let (start_seq, upper, mut cursor, mut pending) =
-        select_start(&pool, &sub.selection.start, sub)?;
-    let mut progress = wire::Progress {
+    let pool = client.open_pool(&PoolRef::name(&sub.selection.pool), false)?;
+    let (start_seq, upper, cursor, pending) = select_start(&pool, &sub.selection.start, sub)?;
+    let progress = wire::Progress {
         start_seq,
         next_seq: start_seq,
         end_seq: (!sub.selection.live).then_some(upper),
         lease_ms: wire::LEASE_MS,
         terminal: false,
-        retention_gap: false,
     };
-    let path = crate::pool_paths::resolve_named_pool_path(&sub.selection.pool, client.pool_dir())
-        .map_err(|_| Error::new(ErrorKind::Usage).with_message("invalid UDP pool name"))?;
-    let mut notify = plasmite::api::notify::open_for_path(&path);
+    follow_selected(socket, key, sub, pool, cursor, pending, progress)
+}
+
+fn follow_selected(
+    socket: &std::net::UdpSocket,
+    key: Key,
+    sub: &Arc<Subscription>,
+    pool: Pool,
+    mut cursor: Cursor,
+    mut pending: Option<FrameRef>,
+    mut progress: wire::Progress,
+) -> Result<Option<Completed>, Error> {
+    let mut notify = plasmite::api::notify::open_for_pool(&pool);
     pool.check_current_path()?;
     reply(socket, key, wire::PROGRESS, &progress);
     let mut batch = 0;
-    while sub.active() {
+    let ending = loop {
+        if !sub.active() {
+            return Ok(None);
+        }
         pool.check_current_path()?;
         if sub.renewal_requested.swap(false, Ordering::AcqRel) {
             reply(socket, key, wire::PROGRESS, &progress);
         }
         if progress.end_seq.is_some_and(|end| progress.next_seq > end) {
             progress.terminal = true;
-            let completed = Completed {
-                sub: sub.clone(),
-                pool: pool.into_path_guard(),
-                progress,
-            };
-            completed.reply(socket, key)?;
-            return Ok(Some(completed));
+            break Ok(progress);
         }
         let next = match pending.take() {
             Some(frame) => CursorResult::Message(frame),
@@ -349,28 +369,9 @@ fn follow_pool(
                     continue;
                 }
                 if frame.seq > progress.next_seq {
-                    progress.retention_gap = true;
-                    reply(
-                        socket,
-                        key,
-                        wire::SKIP,
-                        &wire::Skip {
-                            first: progress.next_seq,
-                            last: if sub.selection.live {
-                                frame.seq - 1
-                            } else {
-                                (frame.seq - 1).min(upper)
-                            },
-                            reason: wire::Reason::Retention,
-                        },
-                    );
-                    if !sub.selection.live {
-                        return Err(Error::new(ErrorKind::RetentionGap)
-                            .with_message("selected UDP history is no longer retained"));
-                    }
+                    break Err(Error::retention_gap(progress.next_seq, frame.seq));
                 }
-                let reason = match wire::data(key.1, frame.seq, frame.timestamp_ns, &frame.payload)
-                {
+                let reason = match wire::data(key.1, frame.seq, frame.time, &frame.payload) {
                     Some(packet) => match socket.send_to(&packet, key.0) {
                         Ok(_) => None,
                         Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
@@ -404,10 +405,10 @@ fn follow_pool(
                 }
             }
             CursorResult::FellBehind => {
-                progress.retention_gap = true;
-                if !sub.selection.live {
-                    return Err(Error::new(ErrorKind::RetentionGap)
-                        .with_message("selected UDP history is no longer retained"));
+                if let Some(oldest) = pool.bounds()?.oldest_seq
+                    && oldest > progress.next_seq
+                {
+                    break Err(Error::retention_gap(progress.next_seq, oldest));
                 }
             }
             CursorResult::WouldBlock => {
@@ -422,8 +423,14 @@ fn follow_pool(
                 }
             }
         }
-    }
-    Ok(None)
+    };
+    let completed = Completed {
+        sub: sub.clone(),
+        pool: pool.into_path_guard(),
+        ending,
+    };
+    completed.reply(socket, key)?;
+    Ok(Some(completed))
 }
 
 pub(crate) async fn run(
@@ -556,7 +563,8 @@ pub(crate) async fn run(
             }
             continue;
         };
-        if crate::pool_paths::resolve_named_pool_path(&selection.pool, client.pool_dir()).is_err() {
+        if crate::pool_paths::resolve_named_pool_path(&selection.pool, client.pool_dir()?).is_err()
+        {
             continue;
         }
         let Some(cookie) = request.cookie else {
@@ -653,6 +661,67 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stale_cursor_sends_a_replayable_terminal_gap() {
+        let directory = tempfile::tempdir().unwrap();
+        let client = LocalClient::new().with_pool_dir(directory.path());
+        let name = PoolRef::name("events");
+        let mut pool = client
+            .create_pool(&name, plasmite::api::PoolOptions::new(16 * 1024))
+            .unwrap();
+        pool.feed(&serde_json::json!({"seed": true}), Feed::new())
+            .unwrap();
+        let sub = Arc::new(Subscription {
+            selection: wire::Selection {
+                pool: "events".into(),
+                start: wire::Start::New,
+                live: true,
+            },
+            cancelled: AtomicBool::new(false),
+            expiry: Mutex::new(Instant::now() + Duration::from_secs(5)),
+            renewal_requested: AtomicBool::new(false),
+        });
+        let (start, _, cursor, pending) = select_start(&pool, &wire::Start::New, &sub).unwrap();
+        let padding = serde_json::json!({"padding": "x".repeat(1536)});
+        let oldest = (0..64)
+            .find_map(|_| {
+                pool.feed(&padding, Feed::new()).unwrap();
+                let oldest = pool.bounds().unwrap().oldest_seq.unwrap();
+                (oldest > start
+                    && matches!(cursor.clone().next(&pool), Ok(CursorResult::FellBehind)))
+                .then_some(oldest)
+            })
+            .expect("overwrite the selected cursor offset");
+        let sender = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let receiver = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        receiver
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let key = (receiver.local_addr().unwrap(), [1; 16]);
+        let progress = wire::Progress {
+            start_seq: start,
+            next_seq: start,
+            end_seq: None,
+            lease_ms: wire::LEASE_MS,
+            terminal: false,
+        };
+        let completed = follow_selected(&sender, key, &sub, pool, cursor, pending, progress)
+            .unwrap()
+            .expect("cache the terminal error for renewal");
+        let mut packet = [0; 1024];
+        let count = receiver.recv(&mut packet).unwrap();
+        assert_eq!(wire::parse(&packet[..count]).unwrap().0, wire::PROGRESS);
+        receiver.recv(&mut packet).unwrap(); // Simulate losing the first error datagram.
+        completed.reply(&sender, key).unwrap();
+        let count = receiver.recv(&mut packet).unwrap();
+        let (op, _, body) = wire::parse(&packet[..count]).unwrap();
+        assert_eq!(op, wire::ERROR);
+        let error: wire::Failure = serde_json::from_slice(body).unwrap();
+        assert_eq!(error.kind, "RetentionGap");
+        assert_eq!(error.missing, Some(start));
+        assert_eq!(error.next_seq, Some(oldest));
+    }
+
+    #[test]
     fn finite_follow_releases_worker_and_mapping_before_lease_ends() {
         let directory = tempfile::tempdir().unwrap();
         let client = LocalClient::new().with_pool_dir(directory.path());
@@ -686,7 +755,7 @@ mod tests {
         worker.join().unwrap();
         let (_, completion) = result.expect("finite worker must return before lease expiry");
         let completion = completion.expect("completion record");
-        assert!(completion.progress.terminal);
+        assert!(completion.ending.unwrap().terminal);
         completion.pool.check_current_path().unwrap();
     }
 }

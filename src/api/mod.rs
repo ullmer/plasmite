@@ -23,11 +23,26 @@ pub use crate::core::pool::{
     PoolPathGuard, PoolUtilization, SeqOffsetCache,
 };
 pub use crate::core::ring_layout::{FrameSpan, RingLayout};
-pub use client::{LocalClient, PoolRef};
-pub use message::{GapPolicy, Lite3Tail, Message, Meta, PoolApiExt, Tail, TailOptions};
-pub(crate) use message::{TailOutcome, TailState, message_from_frame, message_from_udp_payload};
-pub use remote::{RemoteClient, RemoteLite3Frame, RemoteLite3Tail, RemotePool, RemoteTail};
-pub use udp::{
-    UdpClient, UdpEvent, UdpFollow, UdpFollowOptions, UdpFrame, UdpPool, UdpSkipReason, UdpStart,
+pub use client::{DEFAULT_POOL_SIZE, LocalClient, PoolRef};
+pub use message::{
+    Feed, FeedInput, FeedReceipt, Follow, Lite3Follow, Message, Meta, Read, ReadPoll, Since,
+    ViewFollow,
 };
-pub use validation::{ValidationIssue, ValidationReport, ValidationStatus};
+#[doc(hidden)]
+pub use message::{ReadStatus, message_json_from_frame};
+pub(crate) use message::{
+    TailOutcome, TailState, format_ts, frame_matches_tags, message_from_udp_payload,
+    select_frame_json, select_lite3_frame, select_view,
+};
+pub use remote::{RemoteClient, RemoteLite3Frame, RemoteLite3Read, RemotePool, RemoteRead};
+pub use udp::{
+    UdpClient, UdpEvent, UdpFollow, UdpFrame, UdpPool, UdpSkipReason, UdpStart, UdpStreamEvent,
+    UdpViewEvent, UdpViewFollow,
+};
+pub use validation::{
+    ValidationIssue, ValidationMessageStats, ValidationObservation, ValidationReport,
+    ValidationStatus,
+};
+
+#[cfg(test)]
+pub(crate) use message::PoolApiExt;
